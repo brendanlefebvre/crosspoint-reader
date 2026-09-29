@@ -90,6 +90,13 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 49
+
+Each TextBlock's BlockStyle stores a signed 32-bit `fontId` after
+`characterSpacing`: the renderer font the line was laid out in when CSS
+`font-size` (or a heading's default size) selected a different built-in size,
+or 0 for the section font. Sections from earlier versions are rebuilt.
+
 ### Version 48
 
 Version 48 keeps the version 47 serialized layout unchanged. It was bumped
@@ -200,7 +207,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 48
+#define EXPECTED_VERSION 49
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256
@@ -258,6 +265,7 @@ struct BlockStyle {
     bool isRtl;
     bool directionDefined;
     s8 characterSpacing;
+    s32 fontId;
 };
 
 struct TextBlock {

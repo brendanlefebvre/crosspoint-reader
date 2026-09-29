@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <iterator>
 #include <new>
 
@@ -733,6 +734,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   std::string classAttr;
   std::string styleAttr;
   std::string dirAttr;
+  const char* idAttr = "";
   bool hasHiddenAttr = false;
   if (atts != nullptr) {
     for (int i = 0; atts[i]; i += 2) {
@@ -749,6 +751,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         // of thousands of them per chapter, exhausting the heap. TOC anchors are
         // always recorded regardless of element type, since they drive page breaks.
         const char* idValue = atts[i + 1];
+        idAttr = idValue;
         const bool isTocAnchor =
             std::find(self->tocAnchors.begin(), self->tocAnchors.end(), idValue) != self->tocAnchors.end();
         if (isTocAnchor || (!isNonNavigableInlineElement(name) && self->anchorData.size() < MAX_ANCHORS_PER_CHAPTER)) {
@@ -778,7 +781,12 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   // before tag-specific branches emit any content or metadata.
   CssStyle cssStyle;
   if (self->cssParser) {
-    cssStyle = self->cssParser->resolveStyle(name, classAttr);
+    const auto elementDepth = static_cast<size_t>(self->depth);
+    cssStyle = self->cssParser->resolveStyle(name, classAttr, idAttr, self->cssAncestors.data(),
+                                             elementDepth <= MAX_CSS_ANCESTORS ? elementDepth : 0);
+    if (elementDepth < MAX_CSS_ANCESTORS) {
+      self->cssAncestors[elementDepth] = CssParser::makeAncestor(name, classAttr, idAttr);
+    }
     if (!styleAttr.empty()) {
       CssStyle inlineStyle = CssParser::parseInlineStyle(styleAttr);
       cssStyle.applyOver(inlineStyle);
@@ -1379,6 +1387,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     if (self->embeddedStyle && cssStyle.hasTextAlign()) {
       headerBlockStyle.alignment = cssStyle.textAlign;
     }
+    self->applyBlockFontScale(headerBlockStyle, cssStyle, name);
     const auto accumulated =
         self->blockStyleStack.back().getCombinedBlockStyle(headerBlockStyle, BlockStyle::CombineAxis::Horizontal);
     self->blockStyleStack.push_back(accumulated);
@@ -1411,8 +1420,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->startNewTextBlock(brStyle);
     } else {
       self->currentCssStyle = cssStyle;
-      const auto accumulated = self->blockStyleStack.back().getCombinedBlockStyle(userAlignmentBlockStyle,
-                                                                                  BlockStyle::CombineAxis::Horizontal);
+      auto blockStyle = userAlignmentBlockStyle;
+      self->applyBlockFontScale(blockStyle, cssStyle, name);
+      const auto accumulated =
+          self->blockStyleStack.back().getCombinedBlockStyle(blockStyle, BlockStyle::CombineAxis::Horizontal);
       self->blockStyleStack.push_back(accumulated);
       self->startNewTextBlock(accumulated.withoutBottom());
       if (!self->currentTextBlock) {
@@ -1788,7 +1799,7 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
                                         ? static_cast<uint16_t>(self->viewportWidth - horizontalInset)
                                         : self->viewportWidth;
     self->currentTextBlock->layoutAndExtractLines(
-        self->renderer, self->fontId, effectiveWidth,
+        self->renderer, self->prepareBlockFont(), effectiveWidth,
         [self](std::unique_ptr<TextBlock> textBlock, const uint32_t offset) {
           self->addLineToPage(std::move(textBlock), offset);
         },
@@ -2202,9 +2213,66 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   return finishParse();
 }
 
+void ChapterHtmlSlimParser::applyBlockFontScale(BlockStyle& blockStyle, const CssStyle& cssStyle,
+                                                const char* tagName) const {
+  const float parentScale = blockStyleStack.empty() ? 1.0f : blockStyleStack.back().fontScale;
+  float scale = parentScale;
+  if (cssStyle.hasFontSize()) {
+    scale = cssStyle.fontSize.unit == CssUnit::Rem ? cssStyle.fontSize.value : parentScale * cssStyle.fontSize.value;
+  } else if (tagName[0] == 'h' && tagName[1] >= '1' && tagName[1] <= '6' && tagName[2] == '\0') {
+    // Browser default heading sizes, h1..h6.
+    static constexpr float HEADING_SCALES[] = {2.0f, 1.5f, 1.17f, 1.0f, 0.83f, 0.67f};
+    scale = parentScale * HEADING_SCALES[tagName[1] - '1'];
+  }
+  blockStyle.fontScale = std::clamp(scale, 0.5f, 3.0f);
+  blockStyle.fontScaleDefined = true;
+}
+
+namespace {
+// Built-in reader families live in flash at these sizes, so switching a block to
+// another size costs no RAM. SD and vector fonts load one reader size at a time.
+// ponytail: SD/TTF families stay at body size; loading a second size of those
+// would need its own resident glyph caches.
+constexpr uint8_t BUILTIN_LADDER_POINTS[] = {12, 14, 16, 18};
+constexpr int BUILTIN_LADDERS[][std::size(BUILTIN_LADDER_POINTS)] = {
+    {NOTOSERIF_12_FONT_ID, NOTOSERIF_14_FONT_ID, NOTOSERIF_16_FONT_ID, NOTOSERIF_18_FONT_ID},
+    {NOTOSANS_12_FONT_ID, NOTOSANS_14_FONT_ID, NOTOSANS_16_FONT_ID, NOTOSANS_18_FONT_ID},
+};
+}  // namespace
+
+int ChapterHtmlSlimParser::fontIdForScale(const float scale) const {
+  if (std::fabs(scale - 1.0f) < 0.05f) return fontId;
+  for (const auto& ladder : BUILTIN_LADDERS) {
+    const int* base = std::find(std::begin(ladder), std::end(ladder), fontId);
+    if (base == std::end(ladder)) continue;
+    const float target = BUILTIN_LADDER_POINTS[base - ladder] * scale;
+    size_t pick = scale < 1.0f ? 0 : static_cast<size_t>(base - ladder);
+    for (size_t i = 0; i < std::size(BUILTIN_LADDER_POINTS); ++i) {
+      const float points = BUILTIN_LADDER_POINTS[i];
+      // Shrinking takes the largest size at or below the target, so small print
+      // never rounds back up to body size; growing takes the nearest size.
+      if (scale < 1.0f ? points <= target
+                       : std::fabs(points - target) < std::fabs(BUILTIN_LADDER_POINTS[pick] - target)) {
+        pick = i;
+      }
+    }
+    return renderer.getFontMap().count(ladder[pick]) ? ladder[pick] : fontId;
+  }
+  return fontId;
+}
+
+int ChapterHtmlSlimParser::prepareBlockFont() {
+  BlockStyle& blockStyle = currentTextBlock->getBlockStyle();
+  const int layoutFontId = fontIdForScale(blockStyle.fontScale);
+  blockStyle.fontId = layoutFontId == fontId ? 0 : layoutFontId;
+  return layoutFontId;
+}
+
 void ChapterHtmlSlimParser::addLineToPage(std::unique_ptr<TextBlock> line, const uint32_t visibleOffset) {
-  const int lineHeight =
-      renderer.getLineHeight(fontId, lineCompression) + line->getRubyShift(renderer.getFontAscenderSize(fontId));
+  const int lineFontId = line->blockFontId(fontId);
+  const int rubyShift = line->getRubyShift(renderer.getFontAscenderSize(lineFontId));
+  const int baseLineHeight = renderer.getLineHeight(lineFontId, lineCompression);
+  const int lineHeight = baseLineHeight + rubyShift;
 
   if (!currentPage) {
     currentPage.reset(new Page());
@@ -2233,8 +2301,6 @@ void ChapterHtmlSlimParser::addLineToPage(std::unique_ptr<TextBlock> line, const
 
   // Apply horizontal left inset (margin + padding) as x position offset
   const int16_t xOffset = line->getBlockStyle().leftInset();
-  const int rubyShift = line->getRubyShift(renderer.getFontAscenderSize(fontId));
-  const int baseLineHeight = renderer.getLineHeight(fontId, lineCompression);
   for (const auto& link : line->takeLinkSpans()) {
     if (!currentPage->addLink(link.href, static_cast<int16_t>(xOffset + link.x),
                               static_cast<int16_t>(currentPageNextY + rubyShift - link.topLift), link.width,
@@ -2287,7 +2353,7 @@ void ChapterHtmlSlimParser::makePages() {
       (horizontalInset < viewportWidth) ? static_cast<uint16_t>(viewportWidth - horizontalInset) : viewportWidth;
 
   currentTextBlock->layoutAndExtractLines(
-      renderer, fontId, effectiveWidth,
+      renderer, prepareBlockFont(), effectiveWidth,
       [this](std::unique_ptr<TextBlock> textBlock, const uint32_t offset) {
         addLineToPage(std::move(textBlock), offset);
       },

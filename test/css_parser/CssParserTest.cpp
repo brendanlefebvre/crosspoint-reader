@@ -18,7 +18,7 @@ constexpr size_t kMaxRules = 1500;
 constexpr size_t kMaxUniqueStyles = 256;
 constexpr size_t kCacheHeaderBytes = sizeof(uint8_t) * 2 + sizeof(uint16_t);
 constexpr size_t kStyleEnumPrefixBytes = 5;
-constexpr size_t kStyleLengthFieldCount = 11;
+constexpr size_t kStyleLengthFieldCount = 12;
 constexpr size_t kStyleLengthBytes = sizeof(decltype(CssLength::value)) + sizeof(uint8_t);
 
 class CssParserTest : public ::testing::Test {
@@ -261,6 +261,112 @@ TEST_F(CssParserTest, CacheHydrationRejectsInvalidStyleEnumBytes) {
     EXPECT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Invalid);
     EXPECT_TRUE(reader.empty());
   }
+}
+
+TEST_F(CssParserTest, ParsesFontSizeUnitsAndKeywords) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    ".em { font-size: 1.5em; }\n"
+                    ".pct { font-size: 80%; }\n"
+                    ".px { font-size: 24px; }\n"
+                    ".pt { font-size: 18pt; }\n"
+                    ".kw { font-size: x-large; }\n"
+                    ".rel { font-size: smaller; }\n"
+                    ".bad { font-size: 2vw; }\n"),
+            CssParser::ParseResult::Complete);
+
+  const auto size = [&](const char* cls) { return parser.resolveStyle("p", cls).fontSize; };
+  EXPECT_FLOAT_EQ(size("em").value, 1.5f);
+  EXPECT_EQ(size("em").unit, CssUnit::Em);
+  EXPECT_FLOAT_EQ(size("pct").value, 0.8f);
+  EXPECT_EQ(size("pct").unit, CssUnit::Em);
+  EXPECT_FLOAT_EQ(size("px").value, 1.5f);
+  EXPECT_EQ(size("px").unit, CssUnit::Rem);
+  EXPECT_FLOAT_EQ(size("pt").value, 1.5f);
+  EXPECT_FLOAT_EQ(size("kw").value, 1.5f);
+  EXPECT_EQ(size("kw").unit, CssUnit::Rem);
+  EXPECT_FLOAT_EQ(size("rel").value, 0.83f);
+  EXPECT_FALSE(parser.resolveStyle("p", "bad").hasFontSize());
+}
+
+TEST_F(CssParserTest, MatchesIdAndCompoundClassSelectors) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    "#title { text-align: center; }\n"
+                    "h1#title { font-weight: bold; }\n"
+                    ".first.noindent { text-indent: 0; }\n"
+                    "p.b.a { font-style: italic; }\n"
+                    "*.star { text-align: right; }\n"),
+            CssParser::ParseResult::Complete);
+
+  const CssStyle title = parser.resolveStyle("h1", "", "Title");
+  EXPECT_EQ(title.textAlign, CssTextAlign::Center);
+  EXPECT_EQ(title.fontWeight, CssFontWeight::Bold);
+  EXPECT_FALSE(parser.resolveStyle("h2", "", "title").hasFontWeight());
+
+  EXPECT_TRUE(parser.resolveStyle("p", "noindent other first").hasTextIndent());
+  EXPECT_FALSE(parser.resolveStyle("p", "first").hasTextIndent());
+  EXPECT_EQ(parser.resolveStyle("p", "a b").fontStyle, CssFontStyle::Italic);
+  EXPECT_FALSE(parser.resolveStyle("div", "a b").hasFontStyle());
+  EXPECT_EQ(parser.resolveStyle("div", "star").textAlign, CssTextAlign::Right);
+}
+
+TEST_F(CssParserTest, MatchesDescendantAndChildSelectorsAgainstAncestors) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    "p { text-align: justify; }\n"
+                    ".poem p { text-align: left; }\n"
+                    "blockquote > p { font-style: italic; }\n"
+                    "p + p { font-weight: bold; }\n"
+                    "a:hover { font-weight: bold; }\n"),
+            CssParser::ParseResult::Complete);
+  EXPECT_EQ(parser.ruleCount(), 3u);
+
+  const CssAncestor body = CssParser::makeAncestor("body", "", "");
+  const CssAncestor poem = CssParser::makeAncestor("div", "Poem stanza", "");
+  const CssAncestor quote = CssParser::makeAncestor("blockquote", "", "");
+
+  const CssAncestor inPoem[] = {body, poem, CssParser::makeAncestor("div", "", "")};
+  EXPECT_EQ(parser.resolveStyle("p", "", "", inPoem, 3).textAlign, CssTextAlign::Left);
+
+  const CssAncestor plain[] = {body};
+  EXPECT_EQ(parser.resolveStyle("p", "", "", plain, 1).textAlign, CssTextAlign::Justify);
+  EXPECT_EQ(parser.resolveStyle("p", "").textAlign, CssTextAlign::Justify);
+
+  const CssAncestor directQuote[] = {body, quote};
+  EXPECT_EQ(parser.resolveStyle("p", "", "", directQuote, 2).fontStyle, CssFontStyle::Italic);
+  const CssAncestor nestedQuote[] = {body, quote, poem};
+  EXPECT_FALSE(parser.resolveStyle("p", "", "", nestedQuote, 3).hasFontStyle());
+  EXPECT_FALSE(parser.resolveStyle("p", "", "", nestedQuote, 3).hasFontWeight());
+}
+
+TEST_F(CssParserTest, AppliesRulesInSpecificityOrder) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    "#x { text-align: right; }\n"
+                    ".c { text-align: center; }\n"
+                    "div p { text-align: left; }\n"
+                    "p { text-align: justify; }\n"),
+            CssParser::ParseResult::Complete);
+  const CssAncestor ancestors[] = {CssParser::makeAncestor("div", "", "")};
+  EXPECT_EQ(parser.resolveStyle("p", "", "", ancestors, 1).textAlign, CssTextAlign::Left);
+  EXPECT_EQ(parser.resolveStyle("p", "c", "", ancestors, 1).textAlign, CssTextAlign::Center);
+  EXPECT_EQ(parser.resolveStyle("p", "c", "x", ancestors, 1).textAlign, CssTextAlign::Right);
+}
+
+TEST_F(CssParserTest, CacheRoundTripsContextualAndFontSizeRules) {
+  CssParser writer(cachePath());
+  ASSERT_EQ(loadCss(writer, ".poem p { font-size: 0.9em; }\n#t.a.b { font-weight: bold; }\n"),
+            CssParser::ParseResult::Complete);
+  ASSERT_TRUE(writer.saveToCache(true));
+
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  const CssAncestor ancestors[] = {CssParser::makeAncestor("div", "poem", "")};
+  const CssStyle style = reader.resolveStyle("p", "", "", ancestors, 1);
+  EXPECT_TRUE(style.hasFontSize());
+  EXPECT_FLOAT_EQ(style.fontSize.value, 0.9f);
+  EXPECT_EQ(reader.resolveStyle("span", "b a", "t").fontWeight, CssFontWeight::Bold);
 }
 
 TEST_F(CssParserTest, CacheHydrationRejectsNonFiniteStyleLengths) {

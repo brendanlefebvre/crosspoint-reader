@@ -44,7 +44,6 @@ void indexBuildYield(void*) { vTaskDelay(1); }
 void DictionaryWordSelectActivity::onEnter() {
   Activity::onEnter();
   fontId = SETTINGS.getReaderFontId();
-  lineHeight = renderer.getLineHeight(fontId);
   // No null check: a failed allocation just disables the differential
   // fast path (drawHighlightWithSnapshot skips the read), keeping the
   // full-repaint path as the fallback.
@@ -80,8 +79,9 @@ void DictionaryWordSelectActivity::extractWords() {
     if (!block || !block->valid()) continue;
 
     bool rowHasWords = false;
-    const int ascender = renderer.getFontAscenderSize(fontId);
-    const int rubyShift = block->getRubyShift(ascender);
+    const int lineFontId = block->blockFontId(fontId);
+    const int rubyShift = block->getRubyShift(renderer.getFontAscenderSize(lineFontId));
+    const auto lineHeight = static_cast<int16_t>(renderer.getLineHeight(lineFontId));
     for (uint16_t i = 0; i < block->wordCount(); i++) {
       const char* text = block->wordText(i);
       if (!isSelectableToken(text)) continue;
@@ -91,6 +91,8 @@ void DictionaryWordSelectActivity::extractWords() {
       box.y = static_cast<int16_t>(line->yPos + marginTop + rubyShift);
       box.style = block->wordStyle(i);
       box.width = 0;  // measured below, once the advance table is ready
+      box.height = lineHeight;
+      box.fontId = lineFontId;
       box.row = rowCount;
       box.text = text;
       words.push_back(box);
@@ -106,7 +108,7 @@ void DictionaryWordSelectActivity::extractWords() {
   if (styleMask == 0) styleMask = 0x01;  // REGULAR
   renderer.ensureSdCardFontReady(fontId, pageText.c_str(), styleMask);
   for (auto& word : words) {
-    word.width = static_cast<int16_t>(renderer.getTextAdvanceX(fontId, word.text, word.style));
+    word.width = static_cast<int16_t>(renderer.getTextAdvanceX(word.fontId, word.text, word.style));
   }
 }
 
@@ -117,7 +119,7 @@ int DictionaryWordSelectActivity::wordAt(const int x, const int y) const {
   constexpr int SLOP = 4;  // matches the highlight box (+2) plus finger error
   for (int i = 0; i < static_cast<int>(words.size()); i++) {
     const WordBox& word = words[i];
-    if (x >= word.x - SLOP && x < word.x + word.width + SLOP && y >= word.y - SLOP && y < word.y + lineHeight + SLOP) {
+    if (x >= word.x - SLOP && x < word.x + word.width + SLOP && y >= word.y - SLOP && y < word.y + word.height + SLOP) {
       return i;
     }
   }
@@ -302,7 +304,7 @@ bool DictionaryWordSelectActivity::drawHighlightWithSnapshot() {
   int hx = word.x - 2;
   int hy = word.y - 2;
   int hw = word.width + 4;
-  int hh = lineHeight + 4;
+  int hh = word.height + 4;
   // Clamp to the panel so save, draw and restore all use the same box.
   if (hx < 0) {
     hw += hx;
@@ -324,7 +326,7 @@ bool DictionaryWordSelectActivity::drawHighlightWithSnapshot() {
   snapshotIdx = saved ? selected : -1;
 
   renderer.fillRect(hx, hy, hw, hh, true);
-  renderer.drawText(fontId, word.x, word.y, word.text, false, word.style);
+  renderer.drawText(word.fontId, word.x, word.y, word.text, false, word.style);
   return saved;
 }
 
@@ -357,7 +359,8 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
     // The full path's PrewarmScope cleared the glyph cache on exit; batch-load
     // just the highlighted word's glyphs before drawing them white-on-black.
     renderer.getFontCacheManager()->prewarmCache(
-        fontId, words[selected].text, static_cast<uint8_t>(1u << (static_cast<uint8_t>(words[selected].style) & 0x03)));
+        words[selected].fontId, words[selected].text,
+        static_cast<uint8_t>(1u << (static_cast<uint8_t>(words[selected].style) & 0x03)));
     if (drawHighlightWithSnapshot()) {
       drawHints();
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);

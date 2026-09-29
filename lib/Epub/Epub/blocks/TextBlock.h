@@ -87,6 +87,8 @@ class TextBlock final : public Block {
 
   void setBlockStyle(const BlockStyle& blockStyle) { this->blockStyle = blockStyle; }
   const BlockStyle& getBlockStyle() const { return blockStyle; }
+  // The font this line was laid out in: a CSS font-size override, else the section font.
+  int blockFontId(const int sectionFontId) const { return blockStyle.fontId ? blockStyle.fontId : sectionFontId; }
   bool isEmpty() override { return numWords == 0; }
   bool valid() const { return isValid; }
   uint16_t wordCount() const { return numWords; }

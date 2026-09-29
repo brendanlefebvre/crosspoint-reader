@@ -133,11 +133,12 @@ bool TextBlock::hasRuby() const {
   return false;
 }
 
-void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int x, const int y) const {
+void TextBlock::render(const GfxRenderer& renderer, const int sectionFontId, const int x, const int y) const {
   if (!isValid) {
     LOG_ERR("TXB", "Render skipped: invalid block");
     return;
   }
+  const int fontId = blockFontId(sectionFontId);
   const int8_t tracking = blockStyle.characterSpacing;
 
   const bool scanning = renderer.isFontCacheScanning();
@@ -343,6 +344,7 @@ bool TextBlock::serialize(HalFile& file) const {
   serialization::writePod(file, blockStyle.isRtl);
   serialization::writePod(file, blockStyle.directionDefined);
   serialization::writePod(file, blockStyle.characterSpacing);
+  serialization::writePod(file, blockStyle.fontId);
 
   return true;
 }
@@ -442,6 +444,7 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
   serialization::readPod(file, blockStyle.isRtl);
   serialization::readPod(file, blockStyle.directionDefined);
   serialization::readPod(file, blockStyle.characterSpacing);
+  serialization::readPod(file, blockStyle.fontId);
 
   return block;
 }

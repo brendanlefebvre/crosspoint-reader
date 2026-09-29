@@ -13,6 +13,7 @@
 #include "Epub/parsers/ChapterHtmlSlimParser.h"
 #undef private
 #undef class
+#include "../../src/fontIds.h"
 
 namespace {
 
@@ -109,6 +110,44 @@ TEST_F(ChapterHtmlSlimParserTest, UnequalTableCellsAndRubySurvivePageBreaks) {
   EXPECT_EQ(rubyLines, 1u);
   EXPECT_EQ(actual, expected);
   for (const auto& lines : parser.tableCellLines) EXPECT_TRUE(lines.empty());
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BlockFontScaleSnapsToBuiltinSizes) {
+  for (const int id : {NOTOSERIF_12_FONT_ID, NOTOSERIF_14_FONT_ID, NOTOSERIF_16_FONT_ID, NOTOSERIF_18_FONT_ID}) {
+    renderer.fontMap.emplace(id, EpdFontFamily(nullptr));
+  }
+  parser.fontId = NOTOSERIF_14_FONT_ID;
+  EXPECT_EQ(parser.fontIdForScale(1.0f), NOTOSERIF_14_FONT_ID);
+  EXPECT_EQ(parser.fontIdForScale(2.0f), NOTOSERIF_18_FONT_ID);
+  EXPECT_EQ(parser.fontIdForScale(1.17f), NOTOSERIF_16_FONT_ID);
+  EXPECT_EQ(parser.fontIdForScale(0.83f), NOTOSERIF_12_FONT_ID);
+  parser.fontId = NOTOSANS_14_FONT_ID;  // family not registered with the renderer
+  EXPECT_EQ(parser.fontIdForScale(2.0f), NOTOSANS_14_FONT_ID);
+  parser.fontId = 12345;  // SD or vector font: never rescaled
+  EXPECT_EQ(parser.fontIdForScale(2.0f), 12345);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, BlockFontScaleInheritsAndUsesHeadingDefaults) {
+  parser.blockStyleStack.assign(1, BlockStyle{});
+  BlockStyle heading;
+  parser.applyBlockFontScale(heading, CssStyle{}, "h2");
+  EXPECT_FLOAT_EQ(heading.fontScale, 1.5f);
+
+  CssStyle css;
+  css.fontSize = CssLength{0.5f, CssUnit::Em};
+  css.defined.fontSize = 1;
+  parser.blockStyleStack.push_back(heading);
+  BlockStyle child;
+  parser.applyBlockFontScale(child, css, "p");
+  EXPECT_FLOAT_EQ(child.fontScale, 0.75f);
+
+  css.fontSize = CssLength{1.2f, CssUnit::Rem};
+  parser.applyBlockFontScale(child, css, "p");
+  EXPECT_FLOAT_EQ(child.fontScale, 1.2f);
+
+  BlockStyle plain;
+  const BlockStyle inherited = heading.getCombinedBlockStyle(plain, BlockStyle::CombineAxis::Horizontal);
+  EXPECT_FLOAT_EQ(inherited.fontScale, 1.5f);
 }
 
 TEST_F(ChapterHtmlSlimParserTest, PageImageDeserializeRejectsMissingImageBlock) {

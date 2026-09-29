@@ -82,6 +82,10 @@ class ChapterHtmlSlimParser {
   std::vector<StyleStackEntry> inlineStyleStack;
   std::vector<BlockStyle> blockStyleStack;  // accumulated block styles from open ancestor elements
   CssStyle currentCssStyle;
+  // Open elements by depth, for descendant/child CSS selectors. Deeper elements
+  // resolve without ancestors, so contextual rules simply don't match there.
+  static constexpr size_t MAX_CSS_ANCESTORS = 16;
+  std::array<CssAncestor, MAX_CSS_ANCESTORS> cssAncestors{};
   bool effectiveBold = false;
   bool effectiveItalic = false;
   CssTextDecoration effectiveTextDecoration = CssTextDecoration::None;
@@ -171,6 +175,9 @@ class ChapterHtmlSlimParser {
   void addTableRowSeparator();
   void setCurrentPageVisibleOffset(uint32_t offset);
   void makePages();
+  void applyBlockFontScale(BlockStyle& blockStyle, const CssStyle& cssStyle, const char* tagName) const;
+  int fontIdForScale(float scale) const;
+  int prepareBlockFont();
   static EpdFontFamily::Style fontStyleForTextDecoration(CssTextDecoration decoration);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyTextDecorationToEntry(StyleStackEntry& entry, const CssStyle& css);

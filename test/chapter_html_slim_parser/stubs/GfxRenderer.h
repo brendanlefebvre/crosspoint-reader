@@ -4,6 +4,7 @@
 #include <Utf8.h>
 
 #include <deque>
+#include <map>
 #include <string>
 
 namespace BidiUtils {
@@ -28,6 +29,8 @@ class GfxRenderer {
   int getScreenWidth() const { return 480; }
   int getScreenHeight() const { return 800; }
   int getLineHeight(int, float = 1.0f) const { return 16; }
+  const std::map<int, EpdFontFamily>& getFontMap() const { return fontMap; }
+  std::map<int, EpdFontFamily> fontMap;
   int getFontAscenderSize(int) const { return 12; }
   int getSpaceWidth(int, EpdFontFamily::Style) const { return 4; }
   int getTextAdvanceX(int, const char* text, EpdFontFamily::Style, int8_t tracking = 0,
