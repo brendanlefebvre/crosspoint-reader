@@ -42,6 +42,8 @@ struct BlockStyle {
   // Forced page breaks from CSS. Layout-time only; never inherited by children.
   bool pageBreakBefore = false;
   bool pageBreakAfter = false;
+  // Headings: keep the block's last lines on the page with whatever follows. Layout-time only.
+  bool keepWithNext = false;
 
   // Set when this block was created by a <br> element. Used by startNewTextBlock to inject
   // a full line-height gap when the <br> block stays empty (section-break use case).

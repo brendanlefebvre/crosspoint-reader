@@ -531,6 +531,54 @@ TEST_F(ChapterInlineSizeTest, TextAfterTheSpanKeepsBodySize) {
   text(" and the rest of the paragraph");
   close("p");
   EXPECT_EQ(firstLineFontId(), 0);
+  // The lead words keep their own size inline.
+  const auto& block = *static_cast<const PageLine*>(elementsWithTag(TAG_PageLine)[0])->getBlock();
+  EXPECT_EQ(block.wordFontId(0, NOTOSERIF_14_FONT_ID), NOTOSERIF_18_FONT_ID);
+  EXPECT_EQ(block.wordFontId(1, NOTOSERIF_14_FONT_ID), NOTOSERIF_14_FONT_ID);
+}
+
+TEST_F(ChapterInlineSizeTest, MixedSizesWithinALineSurviveTheCache) {
+  open("p", nullptr);
+  text("Normal ");
+  open("span", "font-size: 0.8em");
+  text("small");
+  close("span");
+  text(" then ");
+  open("big", nullptr);
+  text("big");
+  close("big");
+  close("p");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 1u);
+  const auto& block = *static_cast<const PageLine*>(lines[0])->getBlock();
+  ASSERT_EQ(block.wordCount(), 4);
+  EXPECT_EQ(block.wordFontId(0, NOTOSERIF_14_FONT_ID), NOTOSERIF_14_FONT_ID);
+  EXPECT_EQ(block.wordFontId(1, NOTOSERIF_14_FONT_ID), NOTOSERIF_12_FONT_ID);
+  EXPECT_EQ(block.wordFontId(3, NOTOSERIF_14_FONT_ID), NOTOSERIF_16_FONT_ID);
+
+  const auto path = std::filesystem::temp_directory_path() / "crosspoint-word-fonts.bin";
+  {
+    HalFile output;
+    ASSERT_TRUE(output.open(path.c_str(), "wb"));
+    ASSERT_TRUE(block.serialize(output));
+  }
+  HalFile input;
+  ASSERT_TRUE(input.open(path.c_str(), "rb"));
+  const auto cached = TextBlock::deserialize(input);
+  ASSERT_NE(cached, nullptr);
+  for (uint16_t i = 0; i < block.wordCount(); ++i) {
+    EXPECT_EQ(cached->wordFontId(i, NOTOSERIF_14_FONT_ID), block.wordFontId(i, NOTOSERIF_14_FONT_ID));
+  }
+  std::filesystem::remove(path);
+}
+
+TEST_F(ChapterInlineSizeTest, UniformLinesCarryNoWordFonts) {
+  open("p", nullptr);
+  text("Plain text only");
+  close("p");
+  const auto& block = *static_cast<const PageLine*>(elementsWithTag(TAG_PageLine)[0])->getBlock();
+  EXPECT_EQ(block.wordFontId(1, NOTOSERIF_14_FONT_ID), NOTOSERIF_14_FONT_ID);
+  EXPECT_EQ(block.extraAscent(renderer, NOTOSERIF_14_FONT_ID), 0);
 }
 
 TEST_F(ChapterTableBorderTest, ScansColumnWidthsFromMarkup) {
@@ -615,6 +663,28 @@ TEST_F(ChapterWidowOrphanTest, LoneLastLineTakesALineAlong) {
   EXPECT_EQ(linesOnPage(0), 4u);
   const auto& firstOnNext = *parser.currentPage->elements.front();
   EXPECT_EQ(firstOnNext.yPos, 0);
+}
+
+TEST_F(ChapterWidowOrphanTest, HeadingMovesWithTheParagraphAfterIt) {
+  paragraph(13 * 4);  // four lines
+  open("h2", nullptr);
+  text("Heading");
+  close("h2");        // fits as the page's fifth line
+  paragraph(13 * 3);  // cannot start on this page
+  ASSERT_GE(pages.size(), 1u);
+  EXPECT_EQ(linesOnPage(0), 4u);
+  const auto& first = *static_cast<const PageLine&>(*parser.currentPage->elements.front()).getBlock();
+  EXPECT_STREQ(first.wordText(0), "Heading");
+}
+
+TEST_F(ChapterWidowOrphanTest, HeadingStaysWhenFollowedOnItsPage) {
+  paragraph(13 * 2);
+  open("h2", nullptr);
+  text("Heading");
+  close("h2");
+  paragraph(13 * 4);  // two of its four lines fit below the heading, two follow
+  ASSERT_GE(pages.size(), 1u);
+  EXPECT_EQ(linesOnPage(0), 5u);
 }
 
 TEST_F(ChapterWidowOrphanTest, TwoLineParagraphMovesWhole) {

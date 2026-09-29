@@ -90,6 +90,15 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 53
+
+Each TextBlock ends with a `hasWordFonts` flag. When set, it is followed by
+three signed 32-bit font ids and one slot byte per word: 0 draws the word in the
+block's font, `n` in font `n - 1`. Lines mixing inline CSS font sizes use it;
+their words share the baseline of the tallest font. Headings are also kept on
+the same page as the content that follows them. Sections from earlier versions
+are rebuilt.
+
 ### Version 52
 
 Version 52 keeps the version 51 serialized layout unchanged. It was bumped
@@ -236,7 +245,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 52
+#define EXPECTED_VERSION 53
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256
@@ -319,6 +328,11 @@ struct TextBlock {
     }
 
     BlockStyle blockStyle;
+    u8 hasWordFonts;
+    if (hasWordFonts != 0) {
+        s32 wordFonts[3];
+        u8 wordFontSlot[wordCount] [[comment("0 = block font, n = wordFonts[n - 1]")]];
+    }
 };
 
 struct ImageBlock {

@@ -79,6 +79,9 @@ class ChapterHtmlSlimParser {
     bool hasSup = false, sup = false;
     bool hasSub = false, sub = false;
     bool hasSmallCaps = false, smallCaps = false;
+    // Inline font size: a multiple of the parent size, or of the body size when rem.
+    bool hasFontScale = false, fontScaleRem = false;
+    float fontScale = 1.0f;
   };
   std::vector<StyleStackEntry> inlineStyleStack;
   std::vector<BlockStyle> blockStyleStack;  // accumulated block styles from open ancestor elements
@@ -128,13 +131,19 @@ class ChapterHtmlSlimParser {
   };
   static constexpr size_t MAX_BOX_SCOPES = 8;
 
-  // Widow/orphan control: the paragraph being laid out and its latest lines on this page.
+  // Page-break carry-over: a paragraph's orphan/widow lines and a heading kept with what
+  // follows move to the next page instead of being left behind.
+  static constexpr size_t MAX_CARRIED_LINES = 6;
   const ParsedText* layoutParagraph = nullptr;
   bool layoutParagraphHasDropCap = false;
   uint8_t paragraphLinesOnPage = 0;
-  uint32_t paragraphLineOffsets[2] = {};  // newest last
-  int16_t paragraphLineHeights[2] = {};
-  size_t paragraphLinesToCarry() const;
+  uint8_t keepWithNextLines = 0;                       // trailing heading lines on this page
+  uint32_t recentLineOffsets[MAX_CARRIED_LINES] = {};  // visible offsets of this page's last lines, newest last
+  uint8_t recentLineCount = 0;
+  size_t linesToCarry(size_t& paragraphLines) const;
+  size_t keepWithNextCarry() const;
+  bool canCarry(size_t carry) const;
+  void breakPageCarryingLines(size_t carry, size_t paragraphLines, uint32_t visibleOffset);
   std::vector<BoxScope> boxScopes;
   static constexpr size_t MAX_GRID_TABLE_COLUMNS = 4;
   static constexpr size_t MAX_GRID_TABLE_CELL_WORDS = 32;
