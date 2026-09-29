@@ -572,6 +572,34 @@ TEST_F(ChapterInlineSizeTest, MixedSizesWithinALineSurviveTheCache) {
   std::filesystem::remove(path);
 }
 
+TEST_F(ChapterBlockDecorationTest, SdAndVectorFontsSizeThroughTheVariantProvider) {
+  constexpr int SD_FONT = 7;  // not a built-in ladder font
+  parser.fontId = SD_FONT;
+  renderer.variantsEnabled = true;
+  open("h1", nullptr);
+  text("Title");
+  close("h1");
+  open("p", nullptr);
+  text("Body ");
+  open("span", "font-size: 0.8em");
+  text("small");
+  close("span");
+  close("p");
+
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_EQ(static_cast<const PageLine*>(lines[0])->getBlock()->getBlockStyle().fontId, SD_FONT * 1000 + 200);
+  const auto& body = *static_cast<const PageLine*>(lines[1])->getBlock();
+  EXPECT_EQ(body.wordFontId(0, SD_FONT), SD_FONT);
+  EXPECT_EQ(body.wordFontId(1, SD_FONT), SD_FONT * 1000 + 80);
+}
+
+TEST_F(ChapterBlockDecorationTest, UnloadableVariantFallsBackToSectionFont) {
+  EXPECT_EQ(TextBlock::renderFontId(renderer, 12345, 7), 7);
+  renderer.variantsEnabled = true;
+  EXPECT_EQ(TextBlock::renderFontId(renderer, 12345, 7), 12345);
+}
+
 TEST_F(ChapterInlineSizeTest, UniformLinesCarryNoWordFonts) {
   open("p", nullptr);
   text("Plain text only");

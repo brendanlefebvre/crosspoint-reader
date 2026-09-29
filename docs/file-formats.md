@@ -90,6 +90,15 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 54
+
+Version 54 keeps the version 53 serialized layout unchanged. It was bumped
+because SD (.cpfont) and vector fonts now size headings, CSS font-size blocks,
+inline runs and drop caps through sized variants of the reader font, whose ids
+(`BlockStyle.fontId`, word fonts, `PageDropCap.fontId`) derive from the reader
+font id and point size. Cached pages from version 53 laid those out at the body
+size.
+
 ### Version 53
 
 Each TextBlock ends with a `hasWordFonts` flag. When set, it is followed by
@@ -245,7 +254,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 53
+#define EXPECTED_VERSION 54
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256

@@ -87,7 +87,7 @@ void DictionaryWordSelectActivity::extractWords() {
 
       WordBox box;
       box.x = static_cast<int16_t>(line->xPos + block->wordXpos(i) + marginLeft);
-      box.fontId = block->wordFontId(i, fontId);
+      box.fontId = TextBlock::renderFontId(renderer, block->wordFontId(i, fontId), fontId);
       box.y = static_cast<int16_t>(line->yPos + marginTop + rubyShift + block->wordYOffset(renderer, fontId, i));
       box.style = block->wordStyle(i);
       box.width = 0;  // measured below, once the advance table is ready

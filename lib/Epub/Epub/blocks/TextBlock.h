@@ -98,6 +98,8 @@ class TextBlock final : public Block {
   // slots[i] picks word i's font: 0 = the block font, n = fonts[n-1]. Returns false on OOM.
   bool setWordFonts(const uint8_t* slots, const int32_t (&fonts)[MAX_WORD_FONTS]);
   int wordFontId(uint16_t i, int sectionFontId) const;
+  // fontId when it is (or can be) registered with the renderer, else the section font.
+  static int renderFontId(const GfxRenderer& renderer, int fontId, int sectionFontId);
   // Ascent of the line's shared baseline: the tallest font among its words.
   int lineAscent(const GfxRenderer& renderer, int sectionFontId) const;
   // Offset from the line top at which to draw word i so every word shares the baseline.

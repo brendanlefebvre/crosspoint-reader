@@ -760,7 +760,20 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
   // entirely — no heap allocation. For SD card fonts this reads glyph metadata
   // (advanceX only, no bitmaps) for all unique codepoints in this paragraph so
   // that calculateWordWidths() can measure text without on-demand SD I/O.
-  if (renderer.isSdCardFont(fontId)) {
+  // Every size in the paragraph measures through its own font: the block font plus any
+  // inline-size slots resolved by the parser.
+  int32_t paragraphFonts[MAX_SIZE_SLOTS] = {fontId};
+  size_t paragraphFontCount = 1;
+  for (uint8_t slot = 1; slot < sizeSlotCount; ++slot) {
+    const int32_t slotFont = sizeSlotFontIds[slot];
+    if (slotFont != 0 && std::find(paragraphFonts, paragraphFonts + paragraphFontCount, slotFont) ==
+                             paragraphFonts + paragraphFontCount) {
+      paragraphFonts[paragraphFontCount++] = slotFont;
+    }
+  }
+  const bool anySdFont = std::any_of(paragraphFonts, paragraphFonts + paragraphFontCount,
+                                     [&renderer](const int32_t font) { return renderer.isSdCardFont(font); });
+  if (anySdFont) {
     // Style mask: only ask the SD font to load advances for styles actually
     // used in this paragraph. Style index is the low two bits (regular/bold/
     // italic/bold-italic); the underline bit is irrelevant to advance metrics.
@@ -781,8 +794,11 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
       segments.push_back(data);
       segmentLens.push_back(wordStore.chunkUsed(i));
     }
-    renderer.ensureSdCardFontReady(fontId, segments.data(), segmentLens.data(), segments.size(), words.size() > 1,
-                                   hyphenationEnabled, styleMask);
+    for (size_t i = 0; i < paragraphFontCount; ++i) {
+      if (!renderer.isSdCardFont(paragraphFonts[i])) continue;
+      renderer.ensureSdCardFontReady(paragraphFonts[i], segments.data(), segmentLens.data(), segments.size(),
+                                     words.size() > 1, hyphenationEnabled, styleMask);
+    }
   }
 
   const int pageWidth = viewportWidth;

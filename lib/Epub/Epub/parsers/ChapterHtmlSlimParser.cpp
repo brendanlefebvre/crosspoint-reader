@@ -2842,9 +2842,8 @@ void ChapterHtmlSlimParser::applyBlockFontScale(BlockStyle& blockStyle, const Cs
 
 namespace {
 // Built-in reader families live in flash at these sizes, so switching a block to
-// another size costs no RAM. SD and vector fonts load one reader size at a time.
-// ponytail: SD/TTF families stay at body size; loading a second size of those
-// would need its own resident glyph caches.
+// another size costs no RAM. SD and vector fonts get their sizes from the renderer's
+// variant provider.
 constexpr uint8_t BUILTIN_LADDER_POINTS[] = {12, 14, 16, 18};
 constexpr int BUILTIN_LADDERS[][std::size(BUILTIN_LADDER_POINTS)] = {
     {NOTOSERIF_12_FONT_ID, NOTOSERIF_14_FONT_ID, NOTOSERIF_16_FONT_ID, NOTOSERIF_18_FONT_ID},
@@ -2870,7 +2869,8 @@ int ChapterHtmlSlimParser::fontIdForScale(const float scale) const {
     }
     return renderer.getFontMap().count(ladder[pick]) ? ladder[pick] : fontId;
   }
-  return fontId;
+  const int variant = renderer.resolveFontVariant(fontId, scale);
+  return variant != 0 ? variant : fontId;
 }
 
 int ChapterHtmlSlimParser::prepareBlockFont() {

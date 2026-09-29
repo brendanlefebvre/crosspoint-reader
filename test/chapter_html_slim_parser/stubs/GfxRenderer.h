@@ -43,6 +43,12 @@ class GfxRenderer {
   int getScreenHeight() const { return 800; }
   int getLineHeight(int, float = 1.0f) const { return 16; }
   const std::map<int, EpdFontFamily>& getFontMap() const { return fontMap; }
+  // Fixture variant provider: maps (fontId, scale) to fontId * 1000 + scale * 100 when set.
+  bool variantsEnabled = false;
+  int resolveFontVariant(int fontId, float scale) const {
+    return variantsEnabled ? fontId * 1000 + static_cast<int>(scale * 100 + 0.5f) : 0;
+  }
+  bool ensureFontLoaded(int fontId) const { return variantsEnabled || fontMap.count(fontId) != 0 || fontId == 0; }
   std::map<int, EpdFontFamily> fontMap;
   int getFontAscenderSize(int) const { return 12; }
   int getSpaceWidth(int, EpdFontFamily::Style) const { return 4; }

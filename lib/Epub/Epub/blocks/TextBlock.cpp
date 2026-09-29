@@ -141,6 +141,10 @@ bool TextBlock::setWordFonts(const uint8_t* slots, const int32_t (&fonts)[MAX_WO
   return true;
 }
 
+int TextBlock::renderFontId(const GfxRenderer& renderer, const int fontId, const int sectionFontId) {
+  return fontId == sectionFontId || renderer.ensureFontLoaded(fontId) ? fontId : sectionFontId;
+}
+
 int TextBlock::wordFontId(const uint16_t i, const int sectionFontId) const {
   if (!wordFontData) return blockFontId(sectionFontId);
   const uint8_t slot = wordFontData[sizeof(int32_t) * MAX_WORD_FONTS + i];
@@ -151,24 +155,26 @@ int TextBlock::wordFontId(const uint16_t i, const int sectionFontId) const {
 }
 
 int TextBlock::lineAscent(const GfxRenderer& renderer, const int sectionFontId) const {
-  int ascent = renderer.getFontAscenderSize(blockFontId(sectionFontId));
+  int ascent = renderer.getFontAscenderSize(renderFontId(renderer, blockFontId(sectionFontId), sectionFontId));
   if (!wordFontData) return ascent;
   for (uint8_t slot = 0; slot < MAX_WORD_FONTS; ++slot) {
     int32_t font = 0;
     memcpy(&font, wordFontData.get() + sizeof(int32_t) * slot, sizeof(font));
-    if (font != 0) ascent = std::max(ascent, renderer.getFontAscenderSize(font));
+    if (font != 0) ascent = std::max(ascent, renderer.getFontAscenderSize(renderFontId(renderer, font, sectionFontId)));
   }
   return ascent;
 }
 
 int TextBlock::wordYOffset(const GfxRenderer& renderer, const int sectionFontId, const uint16_t i) const {
   if (!wordFontData) return 0;
-  return lineAscent(renderer, sectionFontId) - renderer.getFontAscenderSize(wordFontId(i, sectionFontId));
+  return lineAscent(renderer, sectionFontId) -
+         renderer.getFontAscenderSize(renderFontId(renderer, wordFontId(i, sectionFontId), sectionFontId));
 }
 
 int TextBlock::extraAscent(const GfxRenderer& renderer, const int sectionFontId) const {
   if (!wordFontData) return 0;
-  return lineAscent(renderer, sectionFontId) - renderer.getFontAscenderSize(blockFontId(sectionFontId));
+  return lineAscent(renderer, sectionFontId) -
+         renderer.getFontAscenderSize(renderFontId(renderer, blockFontId(sectionFontId), sectionFontId));
 }
 
 void TextBlock::render(const GfxRenderer& renderer, const int sectionFontId, const int x, const int y) const {
@@ -176,7 +182,8 @@ void TextBlock::render(const GfxRenderer& renderer, const int sectionFontId, con
     LOG_ERR("TXB", "Render skipped: invalid block");
     return;
   }
-  const int fontId = blockFontId(sectionFontId);
+  // A sized variant that can no longer be loaded falls back to the section font.
+  const int fontId = renderFontId(renderer, blockFontId(sectionFontId), sectionFontId);
   const int8_t tracking = blockStyle.characterSpacing;
 
   const bool scanning = renderer.isFontCacheScanning();
@@ -258,7 +265,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int sectionFontId, con
     const auto baseDir =
         static_cast<BidiUtils::BidiBaseDir>(BidiUtils::detectParagraphLevel(word, blockStyle.isRtl ? 1 : 0));
     const uint8_t boundary = focusBoundary(i);
-    const int wordFont = wordFontId(i, sectionFontId);
+    const int wordFont = wordFontData ? renderFontId(renderer, wordFontId(i, sectionFontId), sectionFontId) : fontId;
     const int wordAscender = wordFont == fontId && !wordFontData ? ascender : renderer.getFontAscenderSize(wordFont);
 
     // SUP/SUB shift the baseline passed to drawText; the glyph is also scaled 50% inside

@@ -171,11 +171,13 @@ PageDropCap::PageDropCap(const int32_t fontId, const uint16_t scale256, const Ep
   strncpy(text, utf8, MAX_TEXT_BYTES);
 }
 
-void PageDropCap::render(GfxRenderer& renderer, const int, const int xOffset, const int yOffset) {
+void PageDropCap::render(GfxRenderer& renderer, const int sectionFontId, const int xOffset, const int yOffset) {
+  // A sized variant that can no longer be loaded draws from the section font instead.
+  const int drawFontId = renderer.ensureFontLoaded(fontId) ? fontId : sectionFontId;
   int x = xPos + xOffset;
   const auto* cursor = reinterpret_cast<const unsigned char*>(text);
   while (const uint32_t cp = utf8NextCodepoint(&cursor)) {
-    x += renderer.drawScaledCodepoint(fontId, cp, style, x, yPos + yOffset, scale256);
+    x += renderer.drawScaledCodepoint(drawFontId, cp, style, x, yPos + yOffset, scale256);
   }
 }
 
