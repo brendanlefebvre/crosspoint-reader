@@ -324,8 +324,251 @@ void ChapterHtmlSlimParser::flushPendingAnchor() {
   pendingAnchorId.clear();
 }
 
-void ChapterHtmlSlimParser::completeCurrentPage() {
+void ChapterHtmlSlimParser::emitCurrentPage() {
+  // Open boxes are sliced at the page break and continue on the next page.
+  for (BoxScope& box : boxScopes) {
+    emitBoxSegment(box, false);
+    if (box.top >= 0) box.continued = true;
+    box.top = box.bottom = -1;
+  }
   completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex, currentPageVisibleOffset);
+}
+
+void ChapterHtmlSlimParser::noteContent(const int top, const int bottom) {
+  for (BoxScope& box : boxScopes) {
+    if (box.top < 0) box.top = static_cast<int16_t>(top);
+    box.bottom = static_cast<int16_t>(std::max<int>(box.bottom, bottom));
+  }
+}
+
+void ChapterHtmlSlimParser::openBoxScope(BlockStyle& ownStyle, const CssStyle& cssStyle) {
+  const bool shaded = cssStyle.defined.shaded && cssStyle.shaded;
+  if (tableDepth > 0 || boxScopes.size() >= MAX_BOX_SCOPES || (!cssStyle.hasVisibleBorder() && !shaded)) return;
+
+  BoxScope box;
+  box.depth = depth;
+  box.shaded = shaded;
+  const CssBorderSide* sides[4] = {&cssStyle.borderTop, &cssStyle.borderRight, &cssStyle.borderBottom,
+                                   &cssStyle.borderLeft};
+  for (size_t i = 0; i < 4; ++i) {
+    if (sides[i]->visible()) box.sides[i] = *sides[i];
+  }
+  const BlockStyle& parent = blockStyleStack.back();
+  box.left = static_cast<int16_t>(parent.leftInset() + ownStyle.marginLeft);
+  box.right = static_cast<int16_t>(viewportWidth - parent.rightInset() - ownStyle.marginRight);
+  if (box.right - box.left < 8) return;
+
+  // The border sits between margin and padding, so it joins the padding. Text also
+  // keeps a small gap from the frame even when the book sets no padding.
+  constexpr int16_t MIN_FRAME_GAP = 4;
+  const auto pad = [&](int16_t& padding, const CssBorderSide& side) {
+    if (side.width == 0 && !box.shaded) return;
+    padding = static_cast<int16_t>(std::max(padding, MIN_FRAME_GAP) + side.width);
+  };
+  pad(ownStyle.paddingTop, box.sides[0]);
+  pad(ownStyle.paddingRight, box.sides[1]);
+  pad(ownStyle.paddingBottom, box.sides[2]);
+  pad(ownStyle.paddingLeft, box.sides[3]);
+  box.padTop = ownStyle.paddingTop;
+  box.padBottom = ownStyle.paddingBottom;
+  boxScopes.push_back(box);
+}
+
+void ChapterHtmlSlimParser::closeBoxScope() {
+  BoxScope box = boxScopes.back();
+  boxScopes.pop_back();
+  if (box.top < 0 && !box.continued) {
+    // An element without content (a rule drawn with borders) gets its own height.
+    // Its spacing still sits on the empty text block; consume it here instead.
+    const int height = box.padTop + box.padBottom;
+    if (height <= 0) return;
+    int above = 0;
+    int below = 0;
+    if (currentTextBlock && currentTextBlock->isEmpty()) {
+      BlockStyle& pending = currentTextBlock->getBlockStyle();
+      above = pending.marginTop;
+      below = pending.marginBottom;
+      pending.marginTop = pending.paddingTop = pending.marginBottom = pending.paddingBottom = 0;
+    }
+    if (!currentPage) {
+      currentPage.reset(new Page());
+      currentPageNextY = 0;
+      currentPageVisibleOffsetSet = false;
+    }
+    if (!currentPage->elements.empty() && currentPageNextY + above + height > viewportHeight) {
+      completeCurrentPage();
+      above = 0;
+    }
+    const int top = currentPageNextY + above;
+    box.top = static_cast<int16_t>(top + box.padTop);
+    box.bottom = box.top;
+    currentPageNextY = static_cast<int16_t>(top + height + below);
+    noteContent(top, top + height);
+  }
+  emitBoxSegment(box, true);
+}
+
+void ChapterHtmlSlimParser::emitBoxSegment(const BoxScope& box, const bool closing) {
+  if (box.top < 0 || !currentPage) return;
+  const int top = std::max(0, box.top - box.padTop);
+  const int bottom = std::min<int>(viewportHeight, box.bottom + (closing ? box.padBottom : 0));
+  if (bottom <= top) return;
+  // A page break slices the box: the continuing edges are left open.
+  const CssBorderSide sides[4] = {box.continued ? CssBorderSide{} : box.sides[0], box.sides[1],
+                                  closing ? box.sides[2] : CssBorderSide{}, box.sides[3]};
+  auto element =
+      makeUniqueNoThrow<PageBorderBox>(static_cast<uint16_t>(box.right - box.left), static_cast<uint16_t>(bottom - top),
+                                       sides, box.shaded, box.left, static_cast<int16_t>(top));
+  if (!element) {
+    LOG_ERR("EHP", "OOM: PageBorderBox");
+    return;
+  }
+  currentPage->elements.push_back(std::move(element));
+}
+
+uint8_t ChapterHtmlSlimParser::dropCapLines(const CssStyle& style) {
+  static_assert(MAX_DROP_CAP_BYTES == PageDropCap::MAX_TEXT_BYTES, "captured drop-cap text must fit a PageDropCap");
+  if (style.defined.initialLetter && style.initialLetter > 0) {
+    return style.initialLetter >= 2 ? style.initialLetter : 0;
+  }
+  const bool large = style.hasFontSize() && style.fontSize.value >= 1.5f;
+  if (!large && !(style.defined.floatLeft && style.floatLeft)) return 0;
+  // A floated letter without a size spans three lines; a sized one about its size in ems.
+  return large ? static_cast<uint8_t>(std::clamp(static_cast<int>(style.fontSize.value + 0.5f), 2, 4)) : 3;
+}
+
+void ChapterHtmlSlimParser::armFirstLetterDropCap(const char* tagName, const std::string& classAttr,
+                                                  const char* idAttr) {
+  if (!cssParser || !cssParser->hasFirstLetterRules() || tableDepth > 0 || dropCap.length > 0) return;
+  const auto elementDepth = static_cast<size_t>(depth);
+  const CssStyle firstLetter = cssParser->resolveStyle(tagName, classAttr, idAttr, cssAncestors.data(),
+                                                       elementDepth <= MAX_CSS_ANCESTORS ? elementDepth : 0, true);
+  const uint8_t lines = dropCapLines(firstLetter);
+  if (lines == 0) return;
+  dropCap.firstLetterPending = true;
+  dropCap.lines = lines;
+  dropCap.bold = firstLetter.hasFontWeight() && firstLetter.fontWeight == CssFontWeight::Bold;
+}
+
+namespace {
+// Opening quotes and other punctuation that lead into a drop cap letter.
+bool isDropCapPunctuation(const uint32_t cp) {
+  if (cp < 0x80) return std::ispunct(static_cast<int>(cp)) != 0;
+  return cp == 0xA1 || cp == 0xAB || cp == 0xBB || cp == 0xBF || (cp >= 0x2010 && cp <= 0x205E) ||
+         (cp >= 0x3008 && cp <= 0x3011);
+}
+}  // namespace
+
+// Returns false (and restores the captured text to the word buffer) once the
+// capture is too long to be an initial letter.
+bool ChapterHtmlSlimParser::captureDropCapCodepoint(const char* bytes, const int length) {
+  constexpr uint8_t MAX_DROP_CAP_CODEPOINTS = 3;
+  if (dropCap.length + length > static_cast<int>(MAX_DROP_CAP_BYTES) || dropCap.codepoints >= MAX_DROP_CAP_CODEPOINTS) {
+    cancelDropCapToWord();
+    return false;
+  }
+  memcpy(dropCap.text + dropCap.length, bytes, static_cast<size_t>(length));
+  dropCap.length = static_cast<uint8_t>(dropCap.length + length);
+  dropCap.text[dropCap.length] = '\0';
+  dropCap.codepoints++;
+  if (dropCap.spanDepth < 0) {
+    // ::first-letter takes leading punctuation plus the first letter.
+    const auto* cursor = reinterpret_cast<const unsigned char*>(bytes);
+    if (!isDropCapPunctuation(utf8NextCodepoint(&cursor))) dropCap.firstLetterPending = false;
+  }
+  return true;
+}
+
+void ChapterHtmlSlimParser::cancelDropCapToWord() {
+  memcpy(partWordBuffer + partWordBufferIndex, dropCap.text, dropCap.length);
+  partWordBufferIndex += dropCap.length;
+  dropCap = DropCapState{};
+}
+
+void ChapterHtmlSlimParser::layoutCurrentBlock(const bool includeLastLine) {
+  const int layoutFontId = prepareBlockFont();
+  const int horizontalInset = currentTextBlock->getBlockStyle().totalHorizontalInset();
+  const uint16_t effectiveWidth =
+      (horizontalInset < viewportWidth) ? static_cast<uint16_t>(viewportWidth - horizontalInset) : viewportWidth;
+  const auto emitLine = [this](std::unique_ptr<TextBlock> textBlock, const uint32_t offset) {
+    addLineToPage(std::move(textBlock), offset);
+  };
+  if (dropCap.length > 0 && dropCap.spanDepth < 0 && !currentTextBlock->isEmpty()) {
+    layoutDropCapLines(layoutFontId, effectiveWidth, emitLine, includeLastLine);
+  }
+  currentTextBlock->layoutAndExtractLines(renderer, layoutFontId, effectiveWidth, emitLine, includeLastLine,
+                                          characterSpacing, wordSpacingPercent);
+}
+
+void ChapterHtmlSlimParser::layoutDropCapLines(
+    const int layoutFontId, const uint16_t effectiveWidth,
+    const std::function<void(std::unique_ptr<TextBlock>, uint32_t)>& emitLine, const bool includeLastLine) {
+  const uint8_t lines = dropCap.lines;
+  char text[MAX_DROP_CAP_BYTES + 1];
+  memcpy(text, dropCap.text, sizeof(text));
+  const EpdFontFamily::Style capStyle = dropCap.bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+  dropCap = DropCapState{};
+
+  // Enlarging the family's largest built-in size keeps outlines smoothest.
+  const int capFontId = fontIdForScale(3.0f);
+  const int lineHeight = renderer.getLineHeight(layoutFontId, lineCompression);
+  const int ascender = renderer.getFontAscenderSize(layoutFontId);
+  int32_t advanceFP = 0;
+  int bodyCapTop = 0;
+  int sourceCapTop = 0;
+  if (!renderer.getCodepointMetrics(layoutFontId, 'H', EpdFontFamily::REGULAR, advanceFP, bodyCapTop)) {
+    bodyCapTop = ascender * 7 / 10;
+  }
+  if (!renderer.getCodepointMetrics(capFontId, 'H', capStyle, advanceFP, sourceCapTop) || sourceCapTop <= 0) {
+    sourceCapTop = bodyCapTop > 0 ? bodyCapTop : 1;
+  }
+  // The letter's top aligns with the first line's capitals, its baseline with the last spanned line.
+  const int capHeight = (lines - 1) * lineHeight + bodyCapTop;
+  const int scale256 = std::clamp(capHeight * 256 / sourceCapTop, 256, 4096);
+
+  int capWidth = renderer.getSpaceWidth(layoutFontId, EpdFontFamily::REGULAR);
+  const auto* cursor = reinterpret_cast<const unsigned char*>(text);
+  while (const uint32_t cp = utf8NextCodepoint(&cursor)) {
+    int top = 0;
+    if (renderer.getCodepointMetrics(capFontId, cp, capStyle, advanceFP, top)) {
+      capWidth += fp4::toPixel(advanceFP * scale256 / 256);
+    }
+  }
+  capWidth = std::min(capWidth, effectiveWidth / 2);
+
+  // Keep every spanned line on the letter's page.
+  if (!currentPage) {
+    currentPage.reset(new Page());
+    currentPageNextY = 0;
+    currentPageVisibleOffsetSet = false;
+  }
+  if (!currentPage->elements.empty() && currentPageNextY + lines * lineHeight > viewportHeight) {
+    completeCurrentPage();
+  }
+  BlockStyle& blockStyle = currentTextBlock->getBlockStyle();
+  const int top = currentPageNextY;
+  auto element =
+      makeUniqueNoThrow<PageDropCap>(capFontId, static_cast<uint16_t>(scale256), capStyle, text, blockStyle.leftInset(),
+                                     static_cast<int16_t>(top + (lines - 1) * lineHeight + ascender));
+  if (element) {
+    currentPage->elements.push_back(std::move(element));
+    noteContent(top, top + lines * lineHeight);
+  } else {
+    LOG_ERR("EHP", "OOM: PageDropCap");
+  }
+
+  // The spanned lines wrap beside the letter; a drop-cap paragraph has no first-line indent.
+  blockStyle.textIndent = 0;
+  blockStyle.textIndentDefined = true;
+  blockStyle.marginLeft = static_cast<int16_t>(blockStyle.marginLeft + capWidth);
+  currentTextBlock->layoutAndExtractLines(renderer, layoutFontId, static_cast<uint16_t>(effectiveWidth - capWidth),
+                                          emitLine, includeLastLine, characterSpacing, wordSpacingPercent, lines);
+  blockStyle.marginLeft = static_cast<int16_t>(blockStyle.marginLeft - capWidth);
+  currentPageNextY = static_cast<int16_t>(std::max(static_cast<int>(currentPageNextY), top + lines * lineHeight));
+}
+
+void ChapterHtmlSlimParser::completeCurrentPage() {
+  emitCurrentPage();
   completedPageCount++;
   currentPage.reset(new Page());
   currentPageNextY = 0;
@@ -464,6 +707,7 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
   // If the pending anchor is a TOC chapter boundary, force a page break after the previous
   // block is flushed so the chapter starts on a fresh page.
   flushPendingAnchor();
+  dropCap.firstLetterPending = false;
   currentTextBlock =
       makeUniqueNoThrow<ParsedText>(extraParagraphSpacing, hyphenationEnabled, focusReadingEnabled, blockStyle);
   if (!currentTextBlock) {
@@ -516,7 +760,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
 
   if (!currentPage->elements.empty() && currentPageNextY + totalHeight > viewportHeight) {
     setCurrentPageVisibleOffset(visibleTextOffset);
-    completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex, currentPageVisibleOffset);
+    emitCurrentPage();
     completedPageCount++;
     currentPage.reset(new (std::nothrow) Page());
     if (!currentPage) {
@@ -536,6 +780,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
   }
   currentPage->elements.push_back(std::move(pageRule));
   setCurrentPageVisibleOffset(visibleTextOffset);
+  noteContent(currentPageNextY, currentPageNextY + ruleThickness);
   currentPageNextY = static_cast<int16_t>(currentPageNextY + ruleThickness + bottomSpacing);
 
   if (!pendingAnchorId.empty()) {
@@ -703,7 +948,7 @@ void ChapterHtmlSlimParser::finishTableRow() {
     if (!currentPage || pageFull) {
       if (pageFull) {
         setCurrentPageVisibleOffset(lineVisibleOffset);
-        completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex, currentPageVisibleOffset);
+        emitCurrentPage();
         completedPageCount++;
       }
       currentPage = makeUniqueNoThrow<Page>();
@@ -1210,8 +1455,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 if (self->currentPage && !self->currentPage->elements.empty() &&
                     (self->currentPageNextY + imageMarginTop + displayHeight + imageMarginBottom >
                      self->viewportHeight)) {
-                  self->completePageFn(std::move(self->currentPage), self->xpathParagraphIndex,
-                                       self->xpathListItemIndex, self->currentPageVisibleOffset);
+                  self->emitCurrentPage();
                   self->completedPageCount++;
                   self->currentPage.reset(new Page());
                   if (!self->currentPage) {
@@ -1258,6 +1502,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 }
                 self->currentPage->elements.push_back(std::move(pageImage));
                 self->setCurrentPageVisibleOffset(self->visibleTextOffset);
+                self->noteContent(self->currentPageNextY, self->currentPageNextY + displayHeight);
                 self->currentPageNextY += displayHeight + imageMarginBottom;
 
                 // The image consumed the empty block's accumulated vertical spacing.
@@ -1432,10 +1677,12 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       headerBlockStyle.alignment = cssStyle.textAlign;
     }
     self->applyBlockFontScale(headerBlockStyle, cssStyle, name);
+    self->openBoxScope(headerBlockStyle, cssStyle);
     const auto accumulated =
         self->blockStyleStack.back().getCombinedBlockStyle(headerBlockStyle, BlockStyle::CombineAxis::Horizontal);
     self->pushBlockStyle(accumulated);
     self->startNewTextBlock(accumulated.withoutBottom());
+    self->armFirstLetterDropCap(name, classAttr, idAttr);
     self->boldUntilDepth = std::min(self->boldUntilDepth, self->depth);
     self->updateEffectiveInlineStyle();
   } else if (matches(name, BLOCK_TAGS, std::size(BLOCK_TAGS))) {
@@ -1466,6 +1713,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->currentCssStyle = cssStyle;
       auto blockStyle = userAlignmentBlockStyle;
       self->applyBlockFontScale(blockStyle, cssStyle, name);
+      self->openBoxScope(blockStyle, cssStyle);
       const auto accumulated =
           self->blockStyleStack.back().getCombinedBlockStyle(blockStyle, BlockStyle::CombineAxis::Horizontal);
       self->pushBlockStyle(accumulated);
@@ -1476,6 +1724,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         return;
       }
       self->updateEffectiveInlineStyle();
+      if (strcmp(name, "li") != 0) self->armFirstLetterDropCap(name, classAttr, idAttr);
 
       if (strcmp(name, "li") == 0) {
         // Innermost open <ul>/<ol> (if any) decides whether this item gets a bullet,
@@ -1578,6 +1827,18 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->inlineStyleStack.push_back(entry);
     self->updateEffectiveInlineStyle();
   } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name)) {
+    // A floated or oversized span opening a paragraph is a hand-made drop cap.
+    if (self->tableDepth == 0 && self->dropCap.length == 0 && self->dropCap.spanDepth < 0 &&
+        self->partWordBufferIndex == 0 && self->currentTextBlock && self->currentTextBlock->isEmpty()) {
+      const uint8_t lines = dropCapLines(cssStyle);
+      if (lines > 0) {
+        self->dropCap.spanDepth = self->depth;
+        self->dropCap.lines = lines;
+        self->dropCap.firstLetterPending = false;
+        self->dropCap.bold =
+            self->effectiveBold || (cssStyle.hasFontWeight() && cssStyle.fontWeight == CssFontWeight::Bold);
+      }
+    }
     // Handle span and other inline elements for CSS styling.
     const bool inheritedTableTextAlign = self->tableDepth >= 1 && cssStyle.hasTextAlign();
     if (cssStyle.hasFontWeight() || cssStyle.hasFontStyle() || cssStyle.hasTextDecoration() ||
@@ -1703,6 +1964,24 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     const uint32_t codepointOffset = nextCodepointOffset;
     if (countVisibleOffsets && (static_cast<uint8_t>(s[i]) & 0xC0) != 0x80) {
       nextCodepointOffset++;
+    }
+
+    // Initial-letter capture: a drop-cap span takes all of its text; ::first-letter takes
+    // leading punctuation plus the block's first letter.
+    const bool capturingSpan = self->dropCap.spanDepth >= 0;
+    if (capturingSpan || (self->dropCap.firstLetterPending && !isWhitespace(s[i]) && self->partWordBufferIndex == 0 &&
+                          !self->insideFootnoteLink && self->currentTextBlock->isEmpty())) {
+      if (isWhitespace(s[i])) {
+        // Several words: not an initial letter after all.
+        if (self->dropCap.length > 0) self->cancelDropCapToWord();
+      } else {
+        const auto lead = static_cast<uint8_t>(s[i]);
+        const int codepointLength = std::min(len - i, lead < 0x80 ? 1 : (lead < 0xE0 ? 2 : (lead < 0xF0 ? 3 : 4)));
+        if (self->captureDropCapCodepoint(s + i, codepointLength)) {
+          i += codepointLength - 1;
+          continue;
+        }
+      }
     }
 
     if (isWhitespace(s[i])) {
@@ -1842,16 +2121,7 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
   if (blockWordCount > softFlushThreshold && !self->inRuby) {
     LOG_DBG("EHP", "Text block soft flush (%u words)", static_cast<unsigned>(blockWordCount));
     self->applyPendingPageBreak();
-    const int horizontalInset = self->currentTextBlock->getBlockStyle().totalHorizontalInset();
-    const uint16_t effectiveWidth = (horizontalInset < self->viewportWidth)
-                                        ? static_cast<uint16_t>(self->viewportWidth - horizontalInset)
-                                        : self->viewportWidth;
-    self->currentTextBlock->layoutAndExtractLines(
-        self->renderer, self->prepareBlockFont(), effectiveWidth,
-        [self](std::unique_ptr<TextBlock> textBlock, const uint32_t offset) {
-          self->addLineToPage(std::move(textBlock), offset);
-        },
-        false, self->characterSpacing, self->wordSpacingPercent);
+    self->layoutCurrentBlock(false);
   }
 }
 
@@ -1976,6 +2246,11 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
 
   self->depth -= 1;
 
+  // The captured drop-cap letter waits for its block's layout.
+  if (self->dropCap.spanDepth == self->depth) {
+    self->dropCap.spanDepth = -1;
+  }
+
   // Closing a footnote link — create entry from collected text and href
   if (self->insideFootnoteLink && self->depth == self->footnoteLinkDepth) {
     if (self->currentFootnote.number[0] != '\0' && self->currentFootnote.href[0] != '\0') {
@@ -2069,6 +2344,7 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
       // Vertical margins and paddings are stripped
       self->startNewTextBlock(self->blockStyleStack.back().withoutTop().withoutBottom());
       self->updateEffectiveInlineStyle();
+      if (!self->boxScopes.empty() && self->boxScopes.back().depth == self->depth) self->closeBoxScope();
       // Set after the closing element's own text was laid out above.
       if (breakAfter) self->pendingPageBreak = true;
     }
@@ -2113,6 +2389,9 @@ bool ChapterHtmlSlimParser::beginParse() {
   blockStyleStack.clear();
   blockStyleStack.reserve(8);
   blockStyleStack.push_back(rootBlockStyle);
+  boxScopes.clear();
+  boxScopes.reserve(MAX_BOX_SCOPES);
+  dropCap = DropCapState{};
 
   listStack.clear();
   listStack.reserve(4);
@@ -2238,7 +2517,7 @@ bool ChapterHtmlSlimParser::finishParse() {
       pendingAnchorId.clear();
     }
     setCurrentPageVisibleOffset(visibleTextOffset);
-    completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex, currentPageVisibleOffset);
+    emitCurrentPage();
     completedPageCount++;
     currentPage.reset();
     currentTextBlock.reset();
@@ -2333,7 +2612,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::unique_ptr<TextBlock> line, const
 
   if (currentPageNextY + lineHeight > viewportHeight) {
     setCurrentPageVisibleOffset(visibleOffset);
-    completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex, currentPageVisibleOffset);
+    emitCurrentPage();
     completedPageCount++;
     currentPage.reset(new Page());
     currentPageNextY = 0;
@@ -2365,6 +2644,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::unique_ptr<TextBlock> line, const
     return;
   }
   currentPage->elements.push_back(std::move(pageLine));
+  noteContent(currentPageNextY, currentPageNextY + lineHeight);
   currentPageNextY += lineHeight;
 }
 
@@ -2399,17 +2679,7 @@ void ChapterHtmlSlimParser::makePages() {
     currentPageNextY += blockStyle.paddingTop;
   }
 
-  // Calculate effective width accounting for horizontal margins/padding
-  const int horizontalInset = blockStyle.totalHorizontalInset();
-  const uint16_t effectiveWidth =
-      (horizontalInset < viewportWidth) ? static_cast<uint16_t>(viewportWidth - horizontalInset) : viewportWidth;
-
-  currentTextBlock->layoutAndExtractLines(
-      renderer, prepareBlockFont(), effectiveWidth,
-      [this](std::unique_ptr<TextBlock> textBlock, const uint32_t offset) {
-        addLineToPage(std::move(textBlock), offset);
-      },
-      true, characterSpacing, wordSpacingPercent);
+  layoutCurrentBlock(true);
 
   // Latch again after layout: extractLine can drop a whole line (TextBlock
   // arena OOM) during the call above, after the pre-layout latch ran, and the

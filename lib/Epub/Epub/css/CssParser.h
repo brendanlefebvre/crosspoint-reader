@@ -58,7 +58,7 @@ class CssParser {
   };
 
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
-  static constexpr uint8_t CSS_CACHE_VERSION = 14;
+  static constexpr uint8_t CSS_CACHE_VERSION = 15;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
   ~CssParser() = default;
@@ -82,11 +82,15 @@ class CssParser {
    * @param classAttr The class attribute value (may contain multiple space-separated classes)
    * @param idAttr The id attribute value (may be empty)
    * @param ancestors Open ancestors, outermost first; the last entry is the direct parent
+   * @param firstLetter Resolve the element's ::first-letter rules instead of its own
    * @return Combined style with all applicable rules merged
    */
   [[nodiscard]] CssStyle resolveStyle(std::string_view tagName, std::string_view classAttr,
                                       std::string_view idAttr = {}, const CssAncestor* ancestors = nullptr,
-                                      size_t ancestorCount = 0) const;
+                                      size_t ancestorCount = 0, bool firstLetter = false) const;
+
+  /** True when any ::first-letter rule is stored, so callers can skip that lookup. */
+  [[nodiscard]] bool hasFirstLetterRules() const { return hasFirstLetterRules_; }
 
   [[nodiscard]] static CssAncestor makeAncestor(std::string_view tagName, std::string_view classAttr,
                                                 std::string_view idAttr);
@@ -119,7 +123,7 @@ class CssParser {
     selectorPoolSize_ = selectorPoolCapacity_ = 0;
     styleCount_ = styleCapacity_ = 0;
     ruleGrowthStopped_ = false;
-    hasIdRules_ = hasCompoundRules_ = hasContextualRules_ = false;
+    hasIdRules_ = hasCompoundRules_ = hasContextualRules_ = hasFirstLetterRules_ = false;
   }
 
   /**
@@ -203,6 +207,7 @@ class CssParser {
   bool hasIdRules_ = false;
   bool hasCompoundRules_ = false;
   bool hasContextualRules_ = false;
+  bool hasFirstLetterRules_ = false;
 
   std::string cachePath;
 
@@ -221,6 +226,7 @@ class CssParser {
   PoolResult internStyle(const CssStyle& style, uint16_t& indexOut);
   static CssStyle parseDeclarations(std::string_view declBlock);
   static void parseDeclarationIntoStyle(std::string_view decl, CssStyle& style);
+  static void parseBorderDeclaration(std::string_view name, std::string_view value, CssStyle& style);
 
   // Individual property value parsers
   static CssTextAlign interpretAlignment(std::string_view val);

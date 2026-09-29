@@ -75,6 +75,16 @@ enum class CssVerticalAlign : uint8_t { Baseline = 0, Super = 1, Sub = 2 };
 // list-style-type — only None and Disc (bullet) are relevant for rendering
 enum class CssListStyleType : uint8_t { Disc = 0, None = 1 };
 
+enum class CssBorderStyle : uint8_t { None = 0, Solid = 1, Double = 2, Dotted = 3, Dashed = 4 };
+
+// One box edge. Width is in CSS pixels; a side draws only when both width and style are set.
+struct CssBorderSide {
+  uint8_t width = 0;
+  CssBorderStyle style = CssBorderStyle::None;
+
+  [[nodiscard]] bool visible() const { return width > 0 && style != CssBorderStyle::None; }
+};
+
 // Bitmask for tracking which properties have been explicitly set
 struct CssPropertyFlags {
   uint16_t textAlign : 1;
@@ -100,6 +110,13 @@ struct CssPropertyFlags {
   uint16_t smallCaps : 1;
   uint16_t pageBreakBefore : 1;
   uint16_t pageBreakAfter : 1;
+  uint16_t borderTop : 1;
+  uint16_t borderRight : 1;
+  uint16_t borderBottom : 1;
+  uint16_t borderLeft : 1;
+  uint16_t shaded : 1;
+  uint16_t floatLeft : 1;
+  uint16_t initialLetter : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -124,13 +141,21 @@ struct CssPropertyFlags {
         fontSize(0),
         smallCaps(0),
         pageBreakBefore(0),
-        pageBreakAfter(0) {}
+        pageBreakAfter(0),
+        borderTop(0),
+        borderRight(0),
+        borderBottom(0),
+        borderLeft(0),
+        shaded(0),
+        floatLeft(0),
+        initialLetter(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
            marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight || imageHeight ||
            imageWidth || display || direction || verticalAlign || listStyleType || fontSize || smallCaps ||
-           pageBreakBefore || pageBreakAfter;
+           pageBreakBefore || pageBreakAfter || borderTop || borderRight || borderBottom || borderLeft || shaded ||
+           floatLeft || initialLetter;
   }
 
   void clearAll() {
@@ -139,13 +164,14 @@ struct CssPropertyFlags {
     paddingTop = paddingBottom = paddingLeft = paddingRight = 0;
     imageHeight = imageWidth = display = direction = verticalAlign = listStyleType = fontSize = 0;
     smallCaps = pageBreakBefore = pageBreakAfter = 0;
+    borderTop = borderRight = borderBottom = borderLeft = shaded = floatLeft = initialLetter = 0;
   }
 };
 
-// Cache serializes defined flags as uint32_t with bit indices 0..22.
+// Cache serializes defined flags as uint32_t with bit indices 0..29.
 static_assert(sizeof(CssPropertyFlags) <= sizeof(uint32_t),
               "CssPropertyFlags exceeds 32 bits; update cache read/write in CssParser.cpp");
-static_assert(sizeof(CssPropertyFlags) * 8 >= 23,
+static_assert(sizeof(CssPropertyFlags) * 8 >= 30,
               "CssPropertyFlags has fewer bits than properties; update bitfield widths");
 
 // Represents a collection of CSS style properties
@@ -176,6 +202,10 @@ struct CssStyle {
   bool smallCaps = false;                                       // font-variant(-caps): small-caps
   bool pageBreakBefore = false;                                 // (page-)break-before forces a new page
   bool pageBreakAfter = false;                                  // (page-)break-after forces a new page
+  CssBorderSide borderTop, borderRight, borderBottom, borderLeft;
+  bool shaded = false;        // light background-color, drawn as a gray fill
+  bool floatLeft = false;     // float: left (marks drop-cap spans and ::first-letter rules)
+  uint8_t initialLetter = 0;  // initial-letter: lines a drop cap spans, 0 = normal
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
 
@@ -274,6 +304,34 @@ struct CssStyle {
       pageBreakAfter = base.pageBreakAfter;
       defined.pageBreakAfter = 1;
     }
+    if (base.defined.borderTop) {
+      borderTop = base.borderTop;
+      defined.borderTop = 1;
+    }
+    if (base.defined.borderRight) {
+      borderRight = base.borderRight;
+      defined.borderRight = 1;
+    }
+    if (base.defined.borderBottom) {
+      borderBottom = base.borderBottom;
+      defined.borderBottom = 1;
+    }
+    if (base.defined.borderLeft) {
+      borderLeft = base.borderLeft;
+      defined.borderLeft = 1;
+    }
+    if (base.defined.shaded) {
+      shaded = base.shaded;
+      defined.shaded = 1;
+    }
+    if (base.defined.floatLeft) {
+      floatLeft = base.floatLeft;
+      defined.floatLeft = 1;
+    }
+    if (base.defined.initialLetter) {
+      initialLetter = base.initialLetter;
+      defined.initialLetter = 1;
+    }
   }
 
   [[nodiscard]] bool hasTextAlign() const { return defined.textAlign; }
@@ -299,6 +357,9 @@ struct CssStyle {
   [[nodiscard]] bool hasSmallCaps() const { return defined.smallCaps; }
   [[nodiscard]] bool hasPageBreakBefore() const { return defined.pageBreakBefore; }
   [[nodiscard]] bool hasPageBreakAfter() const { return defined.pageBreakAfter; }
+  [[nodiscard]] bool hasVisibleBorder() const {
+    return borderTop.visible() || borderRight.visible() || borderBottom.visible() || borderLeft.visible();
+  }
 
   void reset() {
     textAlign = CssTextAlign::Left;
@@ -314,6 +375,9 @@ struct CssStyle {
     verticalAlign = CssVerticalAlign::Baseline;
     listStyleType = CssListStyleType::Disc;
     smallCaps = pageBreakBefore = pageBreakAfter = false;
+    borderTop = borderRight = borderBottom = borderLeft = CssBorderSide{};
+    shaded = floatLeft = false;
+    initialLetter = 0;
     defined.clearAll();
   }
 };

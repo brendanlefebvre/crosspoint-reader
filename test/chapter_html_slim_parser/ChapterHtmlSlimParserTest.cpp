@@ -308,6 +308,149 @@ TEST_F(ChapterPageBreakTest, ContainerBreaksOnceBeforeItsFirstChild) {
   EXPECT_EQ(pages, 1u);
 }
 
+class ChapterBlockDecorationTest : public ChapterHtmlSlimParserTest {
+ protected:
+  std::vector<std::unique_ptr<Page>> pages;
+  void SetUp() override {
+    ChapterHtmlSlimParserTest::SetUp();
+    parser.completePageFn = [this](std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t) {
+      pages.push_back(std::move(page));
+    };
+    parser.beginParse();
+  }
+  void open(const char* tag, const char* style) {
+    const XML_Char* attributes[] = {"style", style, nullptr};
+    ChapterHtmlSlimParser::startElement(&parser, tag, style ? attributes : nullptr);
+  }
+  void text(const std::string& value) {
+    ChapterHtmlSlimParser::characterData(&parser, value.c_str(), static_cast<int>(value.size()));
+  }
+  void close(const char* tag) { ChapterHtmlSlimParser::endElement(&parser, tag); }
+  static std::string words(int count) {
+    std::string result;
+    for (int i = 0; i < count; ++i) result += "word ";
+    return result;
+  }
+  std::vector<const PageElement*> elementsWithTag(PageElementTag tag) {
+    std::vector<const PageElement*> found;
+    if (parser.currentPage) pages.push_back(std::move(parser.currentPage));
+    for (const auto& page : pages) {
+      for (const auto& element : page->elements) {
+        if (element->getTag() == tag) found.push_back(element.get());
+      }
+    }
+    return found;
+  }
+};
+
+TEST_F(ChapterBlockDecorationTest, FloatedLeadingSpanBecomesDropCap) {
+  open("p", nullptr);
+  open("span", "float: left; font-size: 3em");
+  text("T");
+  close("span");
+  text("he " + words(60));
+  close("p");
+
+  const auto caps = elementsWithTag(TAG_PageDropCap);
+  ASSERT_EQ(caps.size(), 1u);
+  EXPECT_STREQ(static_cast<const PageDropCap*>(caps[0])->getText(), "T");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_GT(lines.size(), 4u);
+  // Three lines wrap beside the letter, then text returns to the margin.
+  EXPECT_GT(lines[0]->xPos, 0);
+  EXPECT_EQ(lines[2]->xPos, lines[0]->xPos);
+  EXPECT_EQ(lines[3]->xPos, 0);
+  EXPECT_STREQ(static_cast<const PageLine*>(lines[0])->getBlock()->wordText(0), "he");
+}
+
+TEST_F(ChapterBlockDecorationTest, MultiWordSpanStaysText) {
+  open("p", nullptr);
+  open("span", "float: left");
+  text("Once upon");
+  close("span");
+  text(" a time");
+  close("p");
+  EXPECT_TRUE(elementsWithTag(TAG_PageDropCap).empty());
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 1u);
+  EXPECT_STREQ(static_cast<const PageLine*>(lines[0])->getBlock()->wordText(0), "Once");
+}
+
+TEST_F(ChapterBlockDecorationTest, FirstLetterRuleCapturesQuoteAndLetter) {
+  const auto cssPath = std::filesystem::temp_directory_path() / "crosspoint-first-letter.css";
+  {
+    HalFile output;
+    ASSERT_TRUE(output.open(cssPath.c_str(), "wb"));
+    const std::string css = "p.opening::first-letter { initial-letter: 2; }";
+    output.write(css.data(), css.size());
+  }
+  HalFile input;
+  ASSERT_TRUE(input.open(cssPath.c_str(), "rb"));
+  ASSERT_EQ(cssParser.loadFromStream(input), CssParser::ParseResult::Complete);
+
+  const XML_Char* attributes[] = {"class", "opening", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "p", attributes);
+  text("\xe2\x80\x9cIt was " + words(40));
+  close("p");
+  open("p", nullptr);
+  text("Next paragraph");
+  close("p");
+
+  const auto caps = elementsWithTag(TAG_PageDropCap);
+  ASSERT_EQ(caps.size(), 1u);
+  EXPECT_STREQ(static_cast<const PageDropCap*>(caps[0])->getText(), "\xe2\x80\x9cI");
+  std::filesystem::remove(cssPath);
+}
+
+TEST_F(ChapterBlockDecorationTest, BorderedBlockFramesItsTextAndInsetsIt) {
+  open("div", "border: 2px solid black");
+  open("p", nullptr);
+  text("Framed text");
+  close("p");
+  close("div");
+  open("p", nullptr);
+  text("Outside");
+  close("p");
+
+  const auto boxes = elementsWithTag(TAG_PageBorderBox);
+  ASSERT_EQ(boxes.size(), 1u);
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_GE(lines[0]->xPos, 6);  // 2 px border + 4 px gap
+  EXPECT_GT(lines[0]->yPos, boxes[0]->yPos);
+  EXPECT_EQ(lines[1]->xPos, 0);
+}
+
+TEST_F(ChapterBlockDecorationTest, EmptyBorderedBlockDrawsARule) {
+  open("p", nullptr);
+  text("Above");
+  close("p");
+  open("div", "border-top: 1px solid");
+  close("div");
+  open("p", nullptr);
+  text("Below");
+  close("p");
+  const auto boxes = elementsWithTag(TAG_PageBorderBox);
+  ASSERT_EQ(boxes.size(), 1u);
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_GT(boxes[0]->yPos, lines[0]->yPos);
+  EXPECT_GT(lines[1]->yPos, boxes[0]->yPos);
+}
+
+TEST_F(ChapterBlockDecorationTest, ShadedBoxSplitsAcrossPages) {
+  parser.viewportHeight = 100;
+  open("div", "background-color: #ddd");
+  for (int i = 0; i < 12; ++i) {
+    open("p", nullptr);
+    text("line");
+    close("p");
+  }
+  close("div");
+  EXPECT_GE(pages.size(), 1u);
+  EXPECT_GE(elementsWithTag(TAG_PageBorderBox).size(), 2u);
+}
+
 }  // namespace
 
 TEST(TextSpacingLayout, TrackingSeparatesCjkTokensAndScalesWordSpaces) {

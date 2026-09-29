@@ -11,6 +11,8 @@ namespace BidiUtils {
 enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 }
 
+enum Color : uint8_t { Clear = 0x00, White = 0x01, LightGray = 0x05, DarkGray = 0x0A, Black = 0x10 };
+
 class GfxRenderer {
  public:
   enum class TextMeasureMode { Layout, Rendered };
@@ -20,6 +22,17 @@ class GfxRenderer {
   }
   bool isFontCacheScanning() const { return false; }
   void drawLine(int, int, int, int, int, bool) const {}
+  void fillRect(int, int, int, int, bool = true) const {}
+  void fillRectDither(int, int, int, int, Color) const {}
+  // Fixture glyphs: 8 px advance, capitals 10 px tall.
+  int drawScaledCodepoint(int, uint32_t, EpdFontFamily::Style, int, int, int scale256) const {
+    return 8 * scale256 / 256;
+  }
+  bool getCodepointMetrics(int, uint32_t, EpdFontFamily::Style, int32_t& advanceFP, int& top) const {
+    advanceFP = 8 << 4;
+    top = 10;
+    return true;
+  }
   void drawText(int, int, int, const char*, bool, EpdFontFamily::Style,
                 BidiUtils::BidiBaseDir = BidiUtils::BidiBaseDir::AUTO, int8_t = 0) const {}
   int getTextWidth(int font, const char* text, EpdFontFamily::Style style,

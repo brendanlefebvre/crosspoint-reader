@@ -395,6 +395,79 @@ TEST_F(CssParserTest, ParsesSmallCapsAndForcedPageBreaks) {
   EXPECT_FALSE(avoid.pageBreakBefore);
 }
 
+TEST_F(CssParserTest, ParsesBordersAndBackgroundShade) {
+  CssParser writer(cachePath());
+  ASSERT_EQ(loadCss(writer,
+                    ".all { border: 1px solid #000; }\n"
+                    ".top { border-top: thick double; }\n"
+                    ".edges { border-width: 2px 0; border-style: solid; }\n"
+                    ".nostyle { border-bottom: 1px; }\n"
+                    ".long { border-left-width: 3pt; border-left-style: dashed; }\n"
+                    ".gray { background-color: #eee; }\n"
+                    ".white { background-color: #fff; }\n"
+                    ".dark { background: black; }\n"
+                    ".rgb { background: rgb(200, 200, 200) url(x.png) no-repeat; }\n"),
+            CssParser::ParseResult::Complete);
+  ASSERT_TRUE(writer.saveToCache(true));
+
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  const CssStyle all = reader.resolveStyle("div", "all");
+  EXPECT_TRUE(all.borderTop.visible() && all.borderRight.visible() && all.borderBottom.visible() &&
+              all.borderLeft.visible());
+  EXPECT_EQ(all.borderLeft.width, 1);
+  EXPECT_EQ(all.borderLeft.style, CssBorderStyle::Solid);
+
+  const CssStyle top = reader.resolveStyle("div", "top");
+  EXPECT_EQ(top.borderTop.width, 3);
+  EXPECT_EQ(top.borderTop.style, CssBorderStyle::Double);
+  EXPECT_FALSE(top.borderBottom.visible());
+
+  const CssStyle edges = reader.resolveStyle("div", "edges");
+  EXPECT_TRUE(edges.borderTop.visible());
+  EXPECT_TRUE(edges.borderBottom.visible());
+  EXPECT_FALSE(edges.borderLeft.visible());
+
+  EXPECT_FALSE(reader.resolveStyle("div", "nostyle").hasVisibleBorder());
+  const CssStyle dashed = reader.resolveStyle("div", "long");
+  EXPECT_EQ(dashed.borderLeft.width, 4);
+  EXPECT_EQ(dashed.borderLeft.style, CssBorderStyle::Dashed);
+
+  EXPECT_TRUE(reader.resolveStyle("div", "gray").shaded);
+  EXPECT_FALSE(reader.resolveStyle("div", "white").shaded);
+  EXPECT_FALSE(reader.resolveStyle("div", "dark").shaded);
+  EXPECT_TRUE(reader.resolveStyle("div", "rgb").shaded);
+}
+
+TEST_F(CssParserTest, StoresFirstLetterRulesSeparately) {
+  CssParser writer(cachePath());
+  ASSERT_EQ(loadCss(writer,
+                    "p::first-letter { font-size: 3em; float: left; }\n"
+                    ".chapter p:first-letter { initial-letter: 4 3; }\n"
+                    "p { text-indent: 1em; }\n"
+                    "p::before { content: 'x'; font-weight: bold; }\n"),
+            CssParser::ParseResult::Complete);
+  EXPECT_TRUE(writer.hasFirstLetterRules());
+  ASSERT_TRUE(writer.saveToCache(true));
+
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  EXPECT_TRUE(reader.hasFirstLetterRules());
+  const CssStyle paragraph = reader.resolveStyle("p", "");
+  EXPECT_TRUE(paragraph.hasTextIndent());
+  EXPECT_FALSE(paragraph.hasFontSize());
+  EXPECT_FALSE(paragraph.hasFontWeight());
+
+  const CssStyle letter = reader.resolveStyle("p", "", "", nullptr, 0, true);
+  EXPECT_TRUE(letter.floatLeft);
+  EXPECT_FLOAT_EQ(letter.fontSize.value, 3.0f);
+  EXPECT_FALSE(letter.hasTextIndent());
+  EXPECT_EQ(letter.initialLetter, 0);
+
+  const CssAncestor chapter[] = {CssParser::makeAncestor("div", "chapter", "")};
+  EXPECT_EQ(reader.resolveStyle("p", "", "", chapter, 1, true).initialLetter, 4);
+}
+
 TEST_F(CssParserTest, CacheHydrationRejectsNonFiniteStyleLengths) {
   CssParser writer(cachePath());
   ASSERT_EQ(loadCss(writer, ".a { margin-top: 2em; }\n"), CssParser::ParseResult::Complete);

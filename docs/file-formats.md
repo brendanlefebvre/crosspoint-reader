@@ -90,6 +90,17 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 50
+
+Pages gain two element types. `TAG_PageDropCap` (4) is an initial letter drawn
+scaled up from a font's glyph: position (its `yPos` is the baseline of the last
+spanned line), the renderer font id, the scale in 1/256ths, the word style and
+up to 12 bytes of UTF-8 text. `TAG_PageBorderBox` (5) is a CSS border and/or
+background shade around one page's slice of a block element: position, size,
+width and style for the top, right, bottom and left edges (a side split off by a
+page break has width 0), and a shade flag. Sections from earlier versions are
+rebuilt.
+
 ### Version 49
 
 Each TextBlock's BlockStyle stores a signed 32-bit `fontId` after
@@ -210,7 +221,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 49
+#define EXPECTED_VERSION 50
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256
@@ -230,7 +241,9 @@ fn format_string(String s) {
 enum PageElementTag : u8 {
     TAG_PageLine = 1,
     TAG_PageImage = 2,
-    TAG_PageHorizontalRule = 3
+    TAG_PageHorizontalRule = 3,
+    TAG_PageDropCap = 4,
+    TAG_PageBorderBox = 5
 };
 
 enum WordStyle : u8 {
@@ -319,6 +332,30 @@ struct PageHorizontalRule {
     u8 thickness;
 };
 
+struct PageDropCap {
+    s16 xPos;
+    s16 yPos;  // baseline of the last spanned line
+    s32 fontId;
+    u16 scale256;
+    WordStyle style;
+    u8 length;
+    char text[length];
+};
+
+struct BorderSide {
+    u8 width;
+    u8 style;  // 0 none, 1 solid, 2 double, 3 dotted, 4 dashed
+};
+
+struct PageBorderBox {
+    s16 xPos;
+    s16 yPos;
+    u16 width;
+    u16 height;
+    BorderSide sides[4];  // top, right, bottom, left
+    bool shaded;
+};
+
 struct PageElement {
     PageElementTag pageElementType;
     if (pageElementType == TAG_PageLine) {
@@ -327,6 +364,10 @@ struct PageElement {
         PageImage pageImage [[inline]];
     } else if (pageElementType == TAG_PageHorizontalRule) {
         PageHorizontalRule horizontalRule [[inline]];
+    } else if (pageElementType == TAG_PageDropCap) {
+        PageDropCap dropCap [[inline]];
+    } else if (pageElementType == TAG_PageBorderBox) {
+        PageBorderBox borderBox [[inline]];
     } else {
         std::error(std::format("Unknown page element type: {}", pageElementType));
     }

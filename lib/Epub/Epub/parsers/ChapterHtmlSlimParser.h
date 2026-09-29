@@ -98,6 +98,36 @@ class ChapterHtmlSlimParser {
   bool effectiveSub = false;
   bool effectiveSmallCaps = false;
   bool pendingPageBreak = false;  // set when a page-break-after element closes
+
+  // Initial letter captured from a ::first-letter block or a leading float/initial-letter span,
+  // drawn as a PageDropCap when its block is laid out.
+  static constexpr size_t MAX_DROP_CAP_BYTES = 12;
+  struct DropCapState {
+    char text[MAX_DROP_CAP_BYTES + 1] = {};
+    uint8_t length = 0;
+    uint8_t codepoints = 0;
+    uint8_t lines = 0;  // text lines the letter spans
+    bool bold = false;
+    bool firstLetterPending = false;  // capture the current block's first letter
+    int spanDepth = -1;               // capturing the text of the span at this depth
+  } dropCap;
+
+  // Open elements with a CSS border or background shade. Each emits a PageBorderBox around
+  // its content on every page it spans.
+  struct BoxScope {
+    int depth = 0;
+    int16_t left = 0;
+    int16_t right = 0;
+    int16_t padTop = 0;  // outer edge to content, border included
+    int16_t padBottom = 0;
+    CssBorderSide sides[4];  // top, right, bottom, left
+    bool shaded = false;
+    int16_t top = -1;  // content extent on the current page
+    int16_t bottom = -1;
+    bool continued = false;  // sliced onto an earlier page
+  };
+  static constexpr size_t MAX_BOX_SCOPES = 8;
+  std::vector<BoxScope> boxScopes;
   static constexpr size_t MAX_GRID_TABLE_COLUMNS = 4;
   static constexpr size_t MAX_GRID_TABLE_CELL_WORDS = 32;
   static constexpr size_t MAX_GRID_TABLE_CELL_BYTES = 512;
@@ -172,6 +202,19 @@ class ChapterHtmlSlimParser {
   void startNewTextBlock(const BlockStyle& blockStyle);
   void flushPendingAnchor();
   void completeCurrentPage();
+  void emitCurrentPage();
+  void noteContent(int top, int bottom);
+  void openBoxScope(BlockStyle& ownStyle, const CssStyle& cssStyle);
+  void closeBoxScope();
+  void emitBoxSegment(const BoxScope& box, bool closing);
+  void armFirstLetterDropCap(const char* tagName, const std::string& classAttr, const char* idAttr);
+  bool captureDropCapCodepoint(const char* bytes, int length);
+  void cancelDropCapToWord();
+  void layoutCurrentBlock(bool includeLastLine);
+  void layoutDropCapLines(int layoutFontId, uint16_t effectiveWidth,
+                          const std::function<void(std::unique_ptr<TextBlock>, uint32_t)>& emitLine,
+                          bool includeLastLine);
+  static uint8_t dropCapLines(const CssStyle& style);
   void applyPendingPageBreak();
   void pushBlockStyle(const BlockStyle& accumulated);
   void flushPartWordBuffer();

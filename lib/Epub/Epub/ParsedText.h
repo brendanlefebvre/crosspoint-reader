@@ -2,6 +2,7 @@
 
 #include <EpdFontFamily.h>
 
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -131,6 +132,6 @@ class ParsedText {
   bool hadDroppedWords() const { return droppedWords; }
   void layoutAndExtractLines(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth,
                              const std::function<void(std::unique_ptr<TextBlock>, uint32_t)>& processLine,
-                             bool includeLastLine = true, int8_t characterSpacing = 0,
-                             uint8_t wordSpacingPercent = 100);
+                             bool includeLastLine = true, int8_t characterSpacing = 0, uint8_t wordSpacingPercent = 100,
+                             size_t maxLines = SIZE_MAX);
 };
