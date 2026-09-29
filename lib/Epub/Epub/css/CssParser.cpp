@@ -261,6 +261,12 @@ size_t collectEdgeValueTokens(std::string_view s, std::string_view (&out)[4]) {
   return count;
 }
 
+// True for the (page-)break-before/after values that force a new page.
+bool interpretForcedBreak(const std::string_view value) {
+  return iequalsAscii(value, "always") || iequalsAscii(value, "page") || iequalsAscii(value, "left") ||
+         iequalsAscii(value, "right") || iequalsAscii(value, "recto") || iequalsAscii(value, "verso");
+}
+
 std::string_view stripTrailingImportant(std::string_view value) {
   constexpr std::string_view IMPORTANT = "!important";
 
@@ -291,8 +297,8 @@ constexpr std::array STYLE_LENGTH_FIELDS = {
 };
 constexpr size_t STYLE_LENGTH_FIELD_COUNT = STYLE_LENGTH_FIELDS.size();
 constexpr size_t STYLE_WIRE_BYTES =
-    5 + STYLE_LENGTH_FIELD_COUNT * (sizeof(decltype(CssLength::value)) + 1) + 3 + sizeof(uint32_t);
-constexpr uint32_t CSS_DEFINED_BITS_MASK = (1u << 20) - 1;
+    5 + STYLE_LENGTH_FIELD_COUNT * (sizeof(decltype(CssLength::value)) + 1) + 6 + sizeof(uint32_t);
+constexpr uint32_t CSS_DEFINED_BITS_MASK = (1u << 23) - 1;
 
 void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   size_t offset = 0;
@@ -313,6 +319,9 @@ void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   out[offset++] = static_cast<uint8_t>(style.display);
   out[offset++] = static_cast<uint8_t>(style.verticalAlign);
   out[offset++] = static_cast<uint8_t>(style.listStyleType);
+  out[offset++] = style.smallCaps ? 1 : 0;
+  out[offset++] = style.pageBreakBefore ? 1 : 0;
+  out[offset++] = style.pageBreakAfter ? 1 : 0;
 
   uint32_t definedBits = 0;
   if (style.defined.textAlign) definedBits |= 1 << 0;
@@ -335,6 +344,9 @@ void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   if (style.defined.verticalAlign) definedBits |= 1 << 17;
   if (style.defined.listStyleType) definedBits |= 1 << 18;
   if (style.defined.fontSize) definedBits |= 1 << 19;
+  if (style.defined.smallCaps) definedBits |= 1 << 20;
+  if (style.defined.pageBreakBefore) definedBits |= 1 << 21;
+  if (style.defined.pageBreakAfter) definedBits |= 1 << 22;
   memcpy(out + offset, &definedBits, sizeof(definedBits));
 }
 
@@ -381,6 +393,14 @@ bool decodeStyleWire(const uint8_t (&in)[STYLE_WIRE_BYTES], CssStyle& style) {
   style.verticalAlign = static_cast<CssVerticalAlign>(verticalAlign);
   style.listStyleType = static_cast<CssListStyleType>(listStyleType);
 
+  const uint8_t smallCaps = in[offset++];
+  const uint8_t pageBreakBefore = in[offset++];
+  const uint8_t pageBreakAfter = in[offset++];
+  if (smallCaps > 1 || pageBreakBefore > 1 || pageBreakAfter > 1) return false;
+  style.smallCaps = smallCaps != 0;
+  style.pageBreakBefore = pageBreakBefore != 0;
+  style.pageBreakAfter = pageBreakAfter != 0;
+
   uint32_t definedBits = 0;
   memcpy(&definedBits, in + offset, sizeof(definedBits));
   if ((definedBits & ~CSS_DEFINED_BITS_MASK) != 0) return false;
@@ -404,6 +424,9 @@ bool decodeStyleWire(const uint8_t (&in)[STYLE_WIRE_BYTES], CssStyle& style) {
   style.defined.verticalAlign = (definedBits & 1 << 17) != 0;
   style.defined.listStyleType = (definedBits & 1 << 18) != 0;
   style.defined.fontSize = (definedBits & 1 << 19) != 0;
+  style.defined.smallCaps = (definedBits & 1 << 20) != 0;
+  style.defined.pageBreakBefore = (definedBits & 1 << 21) != 0;
+  style.defined.pageBreakAfter = (definedBits & 1 << 22) != 0;
   return true;
 }
 
@@ -841,6 +864,19 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
       style.fontSize = size;
       style.defined.fontSize = 1;
     }
+  } else if (iequalsAscii(name, "font-variant") || iequalsAscii(name, "font-variant-caps")) {
+    bool smallCaps = false;
+    forEachDelimitedToken(value, isCssWhitespace, [&](const std::string_view token) {
+      smallCaps = smallCaps || iequalsAscii(token, "small-caps") || iequalsAscii(token, "all-small-caps");
+    });
+    style.smallCaps = smallCaps;
+    style.defined.smallCaps = 1;
+  } else if (iequalsAscii(name, "page-break-before") || iequalsAscii(name, "break-before")) {
+    style.pageBreakBefore = interpretForcedBreak(value);
+    style.defined.pageBreakBefore = 1;
+  } else if (iequalsAscii(name, "page-break-after") || iequalsAscii(name, "break-after")) {
+    style.pageBreakAfter = interpretForcedBreak(value);
+    style.defined.pageBreakAfter = 1;
   } else if (iequalsAscii(name, "list-style-type")) {
     const std::string_view listStyleValue = stripTrailingImportant(value);
     style.listStyleType = iequalsAscii(listStyleValue, "none") ? CssListStyleType::None : CssListStyleType::Disc;

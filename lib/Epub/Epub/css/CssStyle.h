@@ -97,6 +97,9 @@ struct CssPropertyFlags {
   uint16_t verticalAlign : 1;
   uint16_t listStyleType : 1;
   uint16_t fontSize : 1;
+  uint16_t smallCaps : 1;
+  uint16_t pageBreakBefore : 1;
+  uint16_t pageBreakAfter : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -118,12 +121,16 @@ struct CssPropertyFlags {
         direction(0),
         verticalAlign(0),
         listStyleType(0),
-        fontSize(0) {}
+        fontSize(0),
+        smallCaps(0),
+        pageBreakBefore(0),
+        pageBreakAfter(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
            marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight || imageHeight ||
-           imageWidth || display || direction || verticalAlign || listStyleType || fontSize;
+           imageWidth || display || direction || verticalAlign || listStyleType || fontSize || smallCaps ||
+           pageBreakBefore || pageBreakAfter;
   }
 
   void clearAll() {
@@ -131,13 +138,14 @@ struct CssPropertyFlags {
     marginTop = marginBottom = marginLeft = marginRight = 0;
     paddingTop = paddingBottom = paddingLeft = paddingRight = 0;
     imageHeight = imageWidth = display = direction = verticalAlign = listStyleType = fontSize = 0;
+    smallCaps = pageBreakBefore = pageBreakAfter = 0;
   }
 };
 
-// Cache serializes defined flags as uint32_t with bit indices 0..19.
+// Cache serializes defined flags as uint32_t with bit indices 0..22.
 static_assert(sizeof(CssPropertyFlags) <= sizeof(uint32_t),
               "CssPropertyFlags exceeds 32 bits; update cache read/write in CssParser.cpp");
-static_assert(sizeof(CssPropertyFlags) * 8 >= 20,
+static_assert(sizeof(CssPropertyFlags) * 8 >= 23,
               "CssPropertyFlags has fewer bits than properties; update bitfield widths");
 
 // Represents a collection of CSS style properties
@@ -165,6 +173,9 @@ struct CssStyle {
   CssDisplay display = CssDisplay::Block;                       // display property (Block or None)
   CssVerticalAlign verticalAlign = CssVerticalAlign::Baseline;  // vertical-align (super/sub positioning)
   CssListStyleType listStyleType = CssListStyleType::Disc;      // list-style-type (Disc or None)
+  bool smallCaps = false;                                       // font-variant(-caps): small-caps
+  bool pageBreakBefore = false;                                 // (page-)break-before forces a new page
+  bool pageBreakAfter = false;                                  // (page-)break-after forces a new page
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
 
@@ -251,6 +262,18 @@ struct CssStyle {
       fontSize = base.fontSize;
       defined.fontSize = 1;
     }
+    if (base.hasSmallCaps()) {
+      smallCaps = base.smallCaps;
+      defined.smallCaps = 1;
+    }
+    if (base.hasPageBreakBefore()) {
+      pageBreakBefore = base.pageBreakBefore;
+      defined.pageBreakBefore = 1;
+    }
+    if (base.hasPageBreakAfter()) {
+      pageBreakAfter = base.pageBreakAfter;
+      defined.pageBreakAfter = 1;
+    }
   }
 
   [[nodiscard]] bool hasTextAlign() const { return defined.textAlign; }
@@ -273,6 +296,9 @@ struct CssStyle {
   [[nodiscard]] bool hasVerticalAlign() const { return defined.verticalAlign; }
   [[nodiscard]] bool hasListStyleType() const { return defined.listStyleType; }
   [[nodiscard]] bool hasFontSize() const { return defined.fontSize; }
+  [[nodiscard]] bool hasSmallCaps() const { return defined.smallCaps; }
+  [[nodiscard]] bool hasPageBreakBefore() const { return defined.pageBreakBefore; }
+  [[nodiscard]] bool hasPageBreakAfter() const { return defined.pageBreakAfter; }
 
   void reset() {
     textAlign = CssTextAlign::Left;
@@ -287,6 +313,7 @@ struct CssStyle {
     display = CssDisplay::Block;
     verticalAlign = CssVerticalAlign::Baseline;
     listStyleType = CssListStyleType::Disc;
+    smallCaps = pageBreakBefore = pageBreakAfter = false;
     defined.clearAll();
   }
 };

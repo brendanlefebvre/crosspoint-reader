@@ -78,6 +78,7 @@ class ChapterHtmlSlimParser {
     CssTextAlign textAlign = CssTextAlign::Left;
     bool hasSup = false, sup = false;
     bool hasSub = false, sub = false;
+    bool hasSmallCaps = false, smallCaps = false;
   };
   std::vector<StyleStackEntry> inlineStyleStack;
   std::vector<BlockStyle> blockStyleStack;  // accumulated block styles from open ancestor elements
@@ -95,6 +96,8 @@ class ChapterHtmlSlimParser {
   CssTextAlign effectiveTextAlign = CssTextAlign::Left;
   bool effectiveSup = false;
   bool effectiveSub = false;
+  bool effectiveSmallCaps = false;
+  bool pendingPageBreak = false;  // set when a page-break-after element closes
   static constexpr size_t MAX_GRID_TABLE_COLUMNS = 4;
   static constexpr size_t MAX_GRID_TABLE_CELL_WORDS = 32;
   static constexpr size_t MAX_GRID_TABLE_CELL_BYTES = 512;
@@ -168,6 +171,9 @@ class ChapterHtmlSlimParser {
   void updateEffectiveInlineStyle();
   void startNewTextBlock(const BlockStyle& blockStyle);
   void flushPendingAnchor();
+  void completeCurrentPage();
+  void applyPendingPageBreak();
+  void pushBlockStyle(const BlockStyle& accumulated);
   void flushPartWordBuffer();
   void fallbackTableRowToStacked();
   void closeTableCell();
@@ -181,6 +187,7 @@ class ChapterHtmlSlimParser {
   static EpdFontFamily::Style fontStyleForTextDecoration(CssTextDecoration decoration);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyTextDecorationToEntry(StyleStackEntry& entry, const CssStyle& css);
+  static void applySmallCapsToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyVerticalAlignToEntry(StyleStackEntry& entry, const CssStyle& css);
   void pushTableTextStyleEntry(const CssStyle& cssStyle);
   void pushDecorationStyleEntry(CssTextDecoration defaultDecoration, const CssStyle& cssStyle);

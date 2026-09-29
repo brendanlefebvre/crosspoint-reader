@@ -369,6 +369,32 @@ TEST_F(CssParserTest, CacheRoundTripsContextualAndFontSizeRules) {
   EXPECT_EQ(reader.resolveStyle("span", "b a", "t").fontWeight, CssFontWeight::Bold);
 }
 
+TEST_F(CssParserTest, ParsesSmallCapsAndForcedPageBreaks) {
+  CssParser writer(cachePath());
+  ASSERT_EQ(loadCss(writer,
+                    ".sc { font-variant: small-caps; }\n"
+                    ".asc { font-variant-caps: all-small-caps; }\n"
+                    ".normal { font-variant: normal; }\n"
+                    ".before { page-break-before: always; }\n"
+                    ".after { break-after: right; }\n"
+                    ".avoid { page-break-before: avoid; }\n"),
+            CssParser::ParseResult::Complete);
+  ASSERT_TRUE(writer.saveToCache(true));
+
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  EXPECT_TRUE(reader.resolveStyle("span", "sc").smallCaps);
+  EXPECT_TRUE(reader.resolveStyle("span", "asc").smallCaps);
+  const CssStyle normal = reader.resolveStyle("span", "normal");
+  EXPECT_TRUE(normal.hasSmallCaps());
+  EXPECT_FALSE(normal.smallCaps);
+  EXPECT_TRUE(reader.resolveStyle("div", "before").pageBreakBefore);
+  EXPECT_TRUE(reader.resolveStyle("div", "after").pageBreakAfter);
+  const CssStyle avoid = reader.resolveStyle("div", "avoid");
+  EXPECT_TRUE(avoid.hasPageBreakBefore());
+  EXPECT_FALSE(avoid.pageBreakBefore);
+}
+
 TEST_F(CssParserTest, CacheHydrationRejectsNonFiniteStyleLengths) {
   CssParser writer(cachePath());
   ASSERT_EQ(loadCss(writer, ".a { margin-top: 2em; }\n"), CssParser::ParseResult::Complete);

@@ -2,6 +2,7 @@
 #include <GfxRenderer.h>
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <set>
@@ -236,6 +237,75 @@ TEST_F(ChapterHtmlSlimParserTest, DivWithHiddenAttributeContentShouldBeSkipped) 
   ChapterHtmlSlimParser::characterData(&parser, "[HIDDEN]", 8);
 
   ASSERT_EQ(parser.partWordBufferIndex, 0);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, SmallCapsSpanMarksWordsWithoutChangingText) {
+  const XML_Char* attributes[] = {"style", "font-variant: small-caps", nullptr};
+  parser.beginParse();
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "Plain ", 6);
+  ChapterHtmlSlimParser::startElement(&parser, "span", attributes);
+  ChapterHtmlSlimParser::characterData(&parser, "Chapter", 7);
+  ChapterHtmlSlimParser::endElement(&parser, "span");
+  ChapterHtmlSlimParser::characterData(&parser, " after", 6);
+  ChapterHtmlSlimParser::endElement(&parser, "p");
+
+  ASSERT_EQ(parser.currentTextBlock->size(), 0u);  // flushed to the page on </p>
+  ASSERT_NE(parser.currentPage, nullptr);
+  const auto& block = *static_cast<const PageLine&>(*parser.currentPage->elements.front()).getBlock();
+  ASSERT_EQ(block.wordCount(), 3);
+  EXPECT_STREQ(block.wordText(1), "Chapter");
+  EXPECT_EQ(block.wordStyle(0) & EpdFontFamily::SMALL_CAPS, 0);
+  EXPECT_NE(block.wordStyle(1) & EpdFontFamily::SMALL_CAPS, 0);
+  EXPECT_EQ(block.wordStyle(2) & EpdFontFamily::SMALL_CAPS, 0);
+}
+
+class ChapterPageBreakTest : public ChapterHtmlSlimParserTest {
+ protected:
+  unsigned pages = 0;
+  void SetUp() override {
+    ChapterHtmlSlimParserTest::SetUp();
+    parser.completePageFn = [this](std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t) { ++pages; };
+    parser.beginParse();
+  }
+  void paragraph(const char* text, const char* style = nullptr) {
+    const XML_Char* attributes[] = {"style", style, nullptr};
+    ChapterHtmlSlimParser::startElement(&parser, "p", style ? attributes : nullptr);
+    ChapterHtmlSlimParser::characterData(&parser, text, static_cast<int>(strlen(text)));
+    ChapterHtmlSlimParser::endElement(&parser, "p");
+  }
+};
+
+TEST_F(ChapterPageBreakTest, BreakBeforeStartsNewPage) {
+  paragraph("one");
+  paragraph("two");
+  EXPECT_EQ(pages, 0u);
+  paragraph("three", "page-break-before: always");
+  EXPECT_EQ(pages, 1u);
+}
+
+TEST_F(ChapterPageBreakTest, BreakAfterAppliesToFollowingContent) {
+  paragraph("one", "break-after: page");
+  EXPECT_EQ(pages, 0u);
+  paragraph("two");
+  EXPECT_EQ(pages, 1u);
+}
+
+TEST_F(ChapterPageBreakTest, AvoidAndEmptyPageDoNotBreak) {
+  paragraph("first", "page-break-before: always");
+  paragraph("second", "page-break-before: avoid");
+  EXPECT_EQ(pages, 0u);
+}
+
+TEST_F(ChapterPageBreakTest, ContainerBreaksOnceBeforeItsFirstChild) {
+  paragraph("zero");
+  const XML_Char* attributes[] = {"style", "page-break-before: always", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "div", attributes);
+  paragraph("a");
+  paragraph("b");
+  ChapterHtmlSlimParser::endElement(&parser, "div");
+  paragraph("c");
+  EXPECT_EQ(pages, 1u);
 }
 
 }  // namespace

@@ -97,6 +97,9 @@ Each TextBlock's BlockStyle stores a signed 32-bit `fontId` after
 `font-size` (or a heading's default size) selected a different built-in size,
 or 0 for the section font. Sections from earlier versions are rebuilt.
 
+Word style bit 128 (`SMALL_CAPS`) marks CSS small caps; the word text keeps its
+original case. It needs no version change because earlier sections never set it.
+
 ### Version 48
 
 Version 48 keeps the version 47 serialized layout unchanged. It was bumped
@@ -238,7 +241,8 @@ enum WordStyle : u8 {
     UNDERLINE = 4,
     STRIKETHROUGH = 8,
     SUP = 16,
-    SUB = 32
+    SUB = 32,
+    SMALL_CAPS = 128  // lowercase letters drawn as 3/4-scale capitals
 };
 
 enum TextAlign : u8 {
