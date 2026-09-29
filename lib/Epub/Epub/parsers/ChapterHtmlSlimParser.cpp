@@ -686,6 +686,7 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
       }
 
       currentTextBlock->setBlockStyle(style.getCombinedBlockStyle(incoming, BlockStyle::CombineAxis::Vertical));
+      inlineSize = InlineSizeState{};
 
       flushPendingAnchor();
       return;
@@ -708,6 +709,7 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
   // block is flushed so the chapter starts on a fresh page.
   flushPendingAnchor();
   dropCap.firstLetterPending = false;
+  inlineSize = InlineSizeState{};
   currentTextBlock =
       makeUniqueNoThrow<ParsedText>(extraParagraphSpacing, hyphenationEnabled, focusReadingEnabled, blockStyle);
   if (!currentTextBlock) {
@@ -931,6 +933,30 @@ void ChapterHtmlSlimParser::finishTableRow() {
     tableLineVisibleOffsets.clear();
   };
 
+  // Bordered tables frame every cell. Boxes overlap their neighbours by one pixel so
+  // shared edges draw as a single line; a row split by a page break is framed per page.
+  CssBorderSide cellBorder = tableBorder;
+  cellBorder.width = std::min<uint8_t>(cellBorder.width, 3);
+  const bool bordered = cellBorder.visible();
+  const int16_t cellGap = bordered ? static_cast<int16_t>(cellBorder.width + 2) : 0;
+  int sliceTop = -1;
+  const auto frameCells = [&](const int top, const int bottom) {
+    const CssBorderSide sides[4] = {cellBorder, cellBorder, cellBorder, cellBorder};
+    const int height = std::min(bottom + 1, static_cast<int>(viewportHeight)) - top;
+    if (height <= 0) return;
+    for (size_t column = 0; column < columnCount; ++column) {
+      const int x = static_cast<int>(column * cellWidth);
+      const int width = column + 1 == columnCount ? viewportWidth - x : cellWidth + 1;
+      auto box = makeUniqueNoThrow<PageBorderBox>(static_cast<uint16_t>(width), static_cast<uint16_t>(height), sides,
+                                                  false, static_cast<int16_t>(x), static_cast<int16_t>(top));
+      if (!box) {
+        LOG_ERR("EHP", "OOM: table cell border");
+        return;
+      }
+      currentPage->elements.push_back(std::move(box));
+    }
+  };
+
   for (size_t lineIndex = 0; lineIndex < maxLineCount; ++lineIndex) {
     const uint32_t lineVisibleOffset =
         lineIndex < tableLineVisibleOffsets.size() ? tableLineVisibleOffsets[lineIndex] : visibleTextOffset;
@@ -947,6 +973,8 @@ void ChapterHtmlSlimParser::finishTableRow() {
         currentPage && !currentPage->elements.empty() && currentPageNextY + rowLineHeight > viewportHeight;
     if (!currentPage || pageFull) {
       if (pageFull) {
+        if (sliceTop >= 0) frameCells(sliceTop, currentPageNextY);
+        sliceTop = -1;
         setCurrentPageVisibleOffset(lineVisibleOffset);
         emitCurrentPage();
         completedPageCount++;
@@ -961,6 +989,10 @@ void ChapterHtmlSlimParser::finishTableRow() {
       currentPageVisibleOffsetSet = false;
     }
 
+    if (bordered && sliceTop < 0) {
+      sliceTop = currentPageNextY;
+      currentPageNextY = static_cast<int16_t>(currentPageNextY + cellGap);
+    }
     const int16_t rowY = currentPageNextY;
     const size_t requiredCapacity = currentPage->elements.size() + columnCount;
     if (currentPage->elements.capacity() < requiredCapacity) {
@@ -988,7 +1020,12 @@ void ChapterHtmlSlimParser::finishTableRow() {
     currentPageNextY = static_cast<int16_t>(rowY + rowLineHeight);
   }
 
-  addTableRowSeparator();
+  if (bordered && sliceTop >= 0 && currentPage) {
+    currentPageNextY = static_cast<int16_t>(std::min<int>(currentPageNextY + cellGap, viewportHeight));
+    frameCells(sliceTop, currentPageNextY);
+  } else {
+    addTableRowSeparator();
+  }
   tableRowStacked = false;
   clearLayoutLines();
 }
@@ -1133,6 +1170,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->currentTextBlock.reset();
     }
     self->flushPendingAnchor();
+    self->inlineSize = InlineSizeState{};
+    self->dropCap.firstLetterPending = false;
     self->pushTableTextStyleEntry(cssStyle);
     self->tableDepth = 1;
     self->insideTableCell = false;
@@ -1142,6 +1181,15 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->tableCellTextBytes = 0;
     self->tableRowCells.clear();
     self->tableRowCells.reserve(MAX_GRID_TABLE_COLUMNS);
+    self->tableBorder = CssBorderSide{};
+    for (const CssBorderSide* side :
+         {&cssStyle.borderTop, &cssStyle.borderRight, &cssStyle.borderBottom, &cssStyle.borderLeft}) {
+      if (!self->tableBorder.visible() && side->visible()) self->tableBorder = *side;
+    }
+    const char* borderAttr = getAttribute(atts, "border");
+    if (!self->tableBorder.visible() && borderAttr && atoi(borderAttr) > 0) {
+      self->tableBorder = CssBorderSide{1, CssBorderStyle::Solid};
+    }
     self->depth += 1;
     return;
   }
@@ -1204,6 +1252,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->skipUntilDepth = self->depth;
       self->depth += 1;
       return;
+    }
+    for (const CssBorderSide* side :
+         {&cssStyle.borderTop, &cssStyle.borderRight, &cssStyle.borderBottom, &cssStyle.borderLeft}) {
+      if (!self->tableBorder.visible() && side->visible()) self->tableBorder = *side;
     }
     self->insideTableCell = true;
     self->tableCellTextBytes = 0;
@@ -1827,6 +1879,17 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->inlineStyleStack.push_back(entry);
     self->updateEffectiveInlineStyle();
   } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name)) {
+    if (cssStyle.hasFontSize() && self->tableDepth == 0 && self->partWordBufferIndex == 0 && self->currentTextBlock &&
+        self->currentTextBlock->isEmpty() && (!self->inlineSize.valid || self->inlineSize.open)) {
+      const float base =
+          self->inlineSize.valid ? self->inlineSize.scale : self->currentTextBlock->getBlockStyle().fontScale;
+      self->inlineSize.scale =
+          std::clamp(cssStyle.fontSize.unit == CssUnit::Rem ? cssStyle.fontSize.value : base * cssStyle.fontSize.value,
+                     0.5f, 3.0f);
+      if (!self->inlineSize.valid) self->inlineSize.depth = self->depth;
+      self->inlineSize.valid = true;
+      self->inlineSize.open = true;
+    }
     // A floated or oversized span opening a paragraph is a hand-made drop cap.
     if (self->tableDepth == 0 && self->dropCap.length == 0 && self->dropCap.spanDepth < 0 &&
         self->partWordBufferIndex == 0 && self->currentTextBlock && self->currentTextBlock->isEmpty()) {
@@ -1957,6 +2020,11 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
       self->currentFootnote.number[self->currentFootnoteLinkTextLen++] = s[i];
     }
     self->currentFootnote.number[self->currentFootnoteLinkTextLen] = '\0';
+  }
+
+  if (self->inlineSize.valid && !self->inlineSize.open &&
+      std::any_of(s, s + len, [](const char c) { return !isWhitespace(c); })) {
+    self->inlineSize.valid = false;
   }
 
   uint32_t nextCodepointOffset = callbackVisibleOffset;
@@ -2249,6 +2317,9 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
   // The captured drop-cap letter waits for its block's layout.
   if (self->dropCap.spanDepth == self->depth) {
     self->dropCap.spanDepth = -1;
+  }
+  if (self->inlineSize.valid && self->inlineSize.depth == self->depth) {
+    self->inlineSize.open = false;
   }
 
   // Closing a footnote link — create entry from collected text and href
@@ -2593,7 +2664,7 @@ int ChapterHtmlSlimParser::fontIdForScale(const float scale) const {
 
 int ChapterHtmlSlimParser::prepareBlockFont() {
   BlockStyle& blockStyle = currentTextBlock->getBlockStyle();
-  const int layoutFontId = fontIdForScale(blockStyle.fontScale);
+  const int layoutFontId = fontIdForScale(inlineSize.valid ? inlineSize.scale : blockStyle.fontScale);
   blockStyle.fontId = layoutFontId == fontId ? 0 : layoutFontId;
   return layoutFontId;
 }

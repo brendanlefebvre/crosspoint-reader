@@ -141,6 +141,16 @@ class ChapterHtmlSlimParser {
   std::array<std::vector<std::unique_ptr<TextBlock>>, MAX_GRID_TABLE_COLUMNS> tableCellLines;
   std::vector<uint32_t> tableLineVisibleOffsets;
   bool listItemBulletOnly = false;  // true when currentTextBlock has only the <li> bullet
+  CssBorderSide tableBorder;        // grid lines for the current table; invisible when unbordered
+
+  // A font-size span that opens a block and holds all of its text sizes the whole block,
+  // e.g. <p><span class="big">Chapter One</span></p>. Text after the span cancels it.
+  struct InlineSizeState {
+    float scale = 1.0f;
+    int depth = -1;  // outermost sizing span
+    bool valid = false;
+    bool open = false;
+  } inlineSize;
 
   // Tracks the innermost open <ul>/<ol> so <li> knows whether to number itself,
   // bullet itself, or (list-style-type: none) emit no marker at all. Pushed on

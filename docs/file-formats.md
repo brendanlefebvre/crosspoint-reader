@@ -90,6 +90,13 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 51
+
+Version 51 keeps the version 50 serialized layout unchanged. It was bumped
+because bordered tables now frame each grid cell with `PageBorderBox` elements
+instead of a row rule, and a font-size span holding a whole paragraph now sizes
+that paragraph. Cached pages from version 50 no longer match.
+
 ### Version 50
 
 Pages gain two element types. `TAG_PageDropCap` (4) is an initial letter drawn
@@ -221,7 +228,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 50
+#define EXPECTED_VERSION 51
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256

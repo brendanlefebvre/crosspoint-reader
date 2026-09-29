@@ -451,6 +451,88 @@ TEST_F(ChapterBlockDecorationTest, ShadedBoxSplitsAcrossPages) {
   EXPECT_GE(elementsWithTag(TAG_PageBorderBox).size(), 2u);
 }
 
+class ChapterTableBorderTest : public ChapterBlockDecorationTest {
+ protected:
+  void table(const XML_Char** tableAttributes, const char* cellStyle) {
+    ChapterHtmlSlimParser::startElement(&parser, "table", tableAttributes);
+    ChapterHtmlSlimParser::startElement(&parser, "tr", nullptr);
+    for (const char* cell : {"alpha", "beta"}) {
+      open("td", cellStyle);
+      text(cell);
+      close("td");
+    }
+    close("tr");
+    close("table");
+  }
+};
+
+TEST_F(ChapterTableBorderTest, BorderAttributeFramesEveryCell) {
+  const XML_Char* attributes[] = {"border", "1", nullptr};
+  table(attributes, nullptr);
+  EXPECT_EQ(elementsWithTag(TAG_PageBorderBox).size(), 2u);
+  EXPECT_TRUE(elementsWithTag(TAG_PageHorizontalRule).empty());
+}
+
+TEST_F(ChapterTableBorderTest, CellCssBorderFramesEveryCell) {
+  table(nullptr, "border: 1px solid black");
+  const auto boxes = elementsWithTag(TAG_PageBorderBox);
+  ASSERT_EQ(boxes.size(), 2u);
+  EXPECT_EQ(boxes[0]->yPos, boxes[1]->yPos);
+  EXPECT_LT(boxes[0]->xPos, boxes[1]->xPos);
+}
+
+TEST_F(ChapterTableBorderTest, UnborderedTableKeepsRowRule) {
+  table(nullptr, nullptr);
+  EXPECT_TRUE(elementsWithTag(TAG_PageBorderBox).empty());
+  EXPECT_EQ(elementsWithTag(TAG_PageHorizontalRule).size(), 1u);
+}
+
+class ChapterInlineSizeTest : public ChapterBlockDecorationTest {
+ protected:
+  void SetUp() override {
+    ChapterBlockDecorationTest::SetUp();
+    for (const int id : {NOTOSERIF_12_FONT_ID, NOTOSERIF_14_FONT_ID, NOTOSERIF_16_FONT_ID, NOTOSERIF_18_FONT_ID}) {
+      renderer.fontMap.emplace(id, EpdFontFamily(nullptr));
+    }
+    parser.fontId = NOTOSERIF_14_FONT_ID;
+  }
+  int firstLineFontId() {
+    const auto lines = elementsWithTag(TAG_PageLine);
+    return lines.empty() ? -1 : static_cast<const PageLine*>(lines[0])->getBlock()->getBlockStyle().fontId;
+  }
+};
+
+TEST_F(ChapterInlineSizeTest, SpanHoldingWholeBlockSizesIt) {
+  open("p", nullptr);
+  open("span", "font-size: 2em");
+  text("Chapter One");
+  close("span");
+  text(" ");
+  close("p");
+  EXPECT_EQ(firstLineFontId(), NOTOSERIF_18_FONT_ID);
+}
+
+TEST_F(ChapterInlineSizeTest, NestedSpansCompoundTheirSizes) {
+  open("p", nullptr);
+  open("span", "font-size: 0.9em");
+  open("span", "font-size: 0.9em");
+  text("small print");
+  close("span");
+  close("span");
+  close("p");
+  EXPECT_EQ(firstLineFontId(), NOTOSERIF_12_FONT_ID);
+}
+
+TEST_F(ChapterInlineSizeTest, TextAfterTheSpanKeepsBodySize) {
+  open("p", nullptr);
+  open("span", "font-size: 2em");
+  text("Lead");
+  close("span");
+  text(" and the rest of the paragraph");
+  close("p");
+  EXPECT_EQ(firstLineFontId(), 0);
+}
+
 }  // namespace
 
 TEST(TextSpacingLayout, TrackingSeparatesCjkTokensAndScalesWordSpaces) {
