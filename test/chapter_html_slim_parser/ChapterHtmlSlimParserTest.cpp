@@ -533,6 +533,97 @@ TEST_F(ChapterInlineSizeTest, TextAfterTheSpanKeepsBodySize) {
   EXPECT_EQ(firstLineFontId(), 0);
 }
 
+TEST_F(ChapterTableBorderTest, ScansColumnWidthsFromMarkup) {
+  const auto path = std::filesystem::temp_directory_path() / "crosspoint-table-scan.xhtml";
+  {
+    HalFile output;
+    ASSERT_TRUE(output.open(path.c_str(), "wb"));
+    const std::string html =
+        "<table class=\"t\"><tr><th>ID</th><td>A much longer description of the item</td></tr>"
+        "<tr><td colspan=\"2\">Spanning note that must not widen anything at all</td></tr>"
+        "<tr><td>7</td><td>short<br/>lines &amp; more</td></tr></table><p>after</p>";
+    output.write(html.data(), html.size());
+  }
+  HalFile input;
+  ASSERT_TRUE(input.open(path.c_str(), "rb"));
+  ChapterHtmlSlimParser::TableColumnMeasure measure;
+  ASSERT_TRUE(parser.measureTableColumns(input, measure));
+  EXPECT_EQ(measure.columns, 2);
+  EXPECT_EQ(measure.minWidth[0], 16);  // "ID"
+  EXPECT_EQ(measure.minWidth[1], 88);  // "description"
+  EXPECT_EQ(measure.prefWidth[1], 31 * 8 + 6 * 4);
+
+  parser.planTableColumns(measure);
+  ASSERT_EQ(parser.tableColumnCount, 2);
+  EXPECT_EQ(parser.tableColumnWidths[0] + parser.tableColumnWidths[1], parser.viewportWidth);
+  EXPECT_LT(parser.tableColumnWidths[0], parser.tableColumnWidths[1]);
+
+  parser.viewportWidth = 200;  // too narrow for natural widths: column 0 keeps its word
+  parser.planTableColumns(measure);
+  EXPECT_EQ(parser.tableColumnWidths[0], 16 + 8);
+  EXPECT_EQ(parser.tableColumnWidths[1], 200 - 24);
+  std::filesystem::remove(path);
+}
+
+TEST_F(ChapterTableBorderTest, RowsUsePlannedColumnWidths) {
+  ChapterHtmlSlimParser::startElement(&parser, "table", nullptr);
+  parser.tableColumnWidths = {100, 380};
+  parser.tableColumnCount = 2;
+  ChapterHtmlSlimParser::startElement(&parser, "tr", nullptr);
+  for (const char* cell : {"alpha", "beta"}) {
+    open("td", nullptr);
+    text(cell);
+    close("td");
+  }
+  close("tr");
+  close("table");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_EQ(lines[0]->xPos, 4);
+  EXPECT_EQ(lines[1]->xPos, 104);
+}
+
+class ChapterWidowOrphanTest : public ChapterBlockDecorationTest {
+ protected:
+  void SetUp() override {
+    ChapterBlockDecorationTest::SetUp();
+    parser.viewportHeight = 5 * 16;  // five fixture lines per page
+  }
+  void paragraph(int wordCount) {
+    open("p", nullptr);
+    text(words(wordCount));
+    close("p");
+  }
+  size_t linesOnPage(size_t index) {
+    size_t count = 0;
+    for (const auto& element : pages[index]->elements) count += element->getTag() == TAG_PageLine;
+    return count;
+  }
+};
+
+TEST_F(ChapterWidowOrphanTest, LoneFirstLineMovesToNextPage) {
+  paragraph(13 * 4);  // four full lines
+  paragraph(13 * 3);  // its first line would be alone at the page bottom
+  ASSERT_GE(pages.size(), 1u);
+  EXPECT_EQ(linesOnPage(0), 4u);
+}
+
+TEST_F(ChapterWidowOrphanTest, LoneLastLineTakesALineAlong) {
+  paragraph(13 * 5 + 3);  // six lines: the sixth would open page two alone
+  paragraph(13);
+  ASSERT_GE(pages.size(), 1u);
+  EXPECT_EQ(linesOnPage(0), 4u);
+  const auto& firstOnNext = *parser.currentPage->elements.front();
+  EXPECT_EQ(firstOnNext.yPos, 0);
+}
+
+TEST_F(ChapterWidowOrphanTest, TwoLineParagraphMovesWhole) {
+  paragraph(13 * 4);
+  paragraph(13 * 2);  // one line fits: moving just one would orphan, so both move
+  ASSERT_GE(pages.size(), 1u);
+  EXPECT_EQ(linesOnPage(0), 4u);
+}
+
 }  // namespace
 
 TEST(TextSpacingLayout, TrackingSeparatesCjkTokensAndScalesWordSpaces) {

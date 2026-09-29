@@ -67,6 +67,7 @@ class ParsedText {
   bool isNaturalAlign;
   bool hasRtlWord;
   bool droppedWords = false;
+  int linesAfterCurrent = -1;
   std::vector<std::string> reorderedWordsScratch;
   std::vector<EpdFontFamily::Style> reorderedStylesScratch;
   std::vector<uint16_t> reorderedWidthsScratch;
@@ -130,6 +131,9 @@ class ParsedText {
   // True once any word was dropped because the text arena could not allocate.
   // Callers must treat the block as incomplete and fail the section build.
   bool hadDroppedWords() const { return droppedWords; }
+  // While a line is being handed to layoutAndExtractLines' callback: how many lines of the
+  // paragraph follow it, or -1 when the rest of the paragraph is not laid out yet.
+  int linesAfterCurrentLine() const { return linesAfterCurrent; }
   void layoutAndExtractLines(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth,
                              const std::function<void(std::unique_ptr<TextBlock>, uint32_t)>& processLine,
                              bool includeLastLine = true, int8_t characterSpacing = 0, uint8_t wordSpacingPercent = 100,

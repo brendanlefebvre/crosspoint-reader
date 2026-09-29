@@ -127,6 +127,14 @@ class ChapterHtmlSlimParser {
     bool continued = false;  // sliced onto an earlier page
   };
   static constexpr size_t MAX_BOX_SCOPES = 8;
+
+  // Widow/orphan control: the paragraph being laid out and its latest lines on this page.
+  const ParsedText* layoutParagraph = nullptr;
+  bool layoutParagraphHasDropCap = false;
+  uint8_t paragraphLinesOnPage = 0;
+  uint32_t paragraphLineOffsets[2] = {};  // newest last
+  int16_t paragraphLineHeights[2] = {};
+  size_t paragraphLinesToCarry() const;
   std::vector<BoxScope> boxScopes;
   static constexpr size_t MAX_GRID_TABLE_COLUMNS = 4;
   static constexpr size_t MAX_GRID_TABLE_CELL_WORDS = 32;
@@ -142,6 +150,14 @@ class ChapterHtmlSlimParser {
   std::vector<uint32_t> tableLineVisibleOffsets;
   bool listItemBulletOnly = false;  // true when currentTextBlock has only the <li> bullet
   CssBorderSide tableBorder;        // grid lines for the current table; invisible when unbordered
+  // Column widths planned from a pre-scan of the table's markup; 0 columns = equal widths.
+  std::array<uint16_t, MAX_GRID_TABLE_COLUMNS> tableColumnWidths{};
+  uint8_t tableColumnCount = 0;
+  struct TableColumnMeasure {
+    uint16_t minWidth[MAX_GRID_TABLE_COLUMNS] = {};   // longest word
+    uint16_t prefWidth[MAX_GRID_TABLE_COLUMNS] = {};  // longest unwrapped line
+    uint8_t columns = 0;
+  };
 
   // A font-size span that opens a block and holds all of its text sizes the whole block,
   // e.g. <p><span class="big">Chapter One</span></p>. Text after the span cancels it.
@@ -225,6 +241,8 @@ class ChapterHtmlSlimParser {
                           const std::function<void(std::unique_ptr<TextBlock>, uint32_t)>& emitLine,
                           bool includeLastLine);
   static uint8_t dropCapLines(const CssStyle& style);
+  bool measureTableColumns(HalFile& file, TableColumnMeasure& out) const;
+  void planTableColumns(const TableColumnMeasure& measure);
   void applyPendingPageBreak();
   void pushBlockStyle(const BlockStyle& accumulated);
   void flushPartWordBuffer();

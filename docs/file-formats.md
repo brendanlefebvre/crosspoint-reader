@@ -90,6 +90,14 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 52
+
+Version 52 keeps the version 51 serialized layout unchanged. It was bumped
+because table columns are now sized from a pre-scan of the table's markup
+instead of splitting the width equally, and page breaks now avoid leaving a
+paragraph's first line alone at a page bottom or its last line alone at a page
+top. Cached pages from version 51 no longer match.
+
 ### Version 51
 
 Version 51 keeps the version 50 serialized layout unchanged. It was bumped
@@ -228,7 +236,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 51
+#define EXPECTED_VERSION 52
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256

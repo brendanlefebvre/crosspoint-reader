@@ -493,11 +493,15 @@ void ChapterHtmlSlimParser::layoutCurrentBlock(const bool includeLastLine) {
   const auto emitLine = [this](std::unique_ptr<TextBlock> textBlock, const uint32_t offset) {
     addLineToPage(std::move(textBlock), offset);
   };
+  layoutParagraph = currentTextBlock.get();
   if (dropCap.length > 0 && dropCap.spanDepth < 0 && !currentTextBlock->isEmpty()) {
+    // Lines beside the letter must stay on its page.
+    layoutParagraphHasDropCap = true;
     layoutDropCapLines(layoutFontId, effectiveWidth, emitLine, includeLastLine);
   }
   currentTextBlock->layoutAndExtractLines(renderer, layoutFontId, effectiveWidth, emitLine, includeLastLine,
                                           characterSpacing, wordSpacingPercent);
+  layoutParagraph = nullptr;
 }
 
 void ChapterHtmlSlimParser::layoutDropCapLines(
@@ -864,6 +868,169 @@ void ChapterHtmlSlimParser::addTableRowSeparator() {
   currentPageNextY += TABLE_ROW_SEPARATOR_GAP;
 }
 
+// Streams a table's raw markup from its opening tag and measures each column's
+// longest word and longest unwrapped line, so every row can share one set of
+// widths. Returns false when the table is too long or too wide to plan.
+bool ChapterHtmlSlimParser::measureTableColumns(HalFile& file, TableColumnMeasure& out) const {
+  out = TableColumnMeasure{};
+  constexpr size_t MAX_SCAN_BYTES = 32 * 1024;
+  const int spaceWidth = renderer.getSpaceWidth(fontId, EpdFontFamily::REGULAR);
+
+  char buffer[96];
+  char word[40];
+  size_t wordLength = 0;
+  int wordWidth = 0;  // flushed chunks of a word longer than the buffer
+  char tagText[48];
+  size_t tagLength = 0;
+  bool inTag = false;
+  bool inEntity = false;
+  char quote = 0;
+  int tableNesting = 0;
+  int column = -1;
+  bool inCell = false;
+  bool skipCell = false;
+  int lineWidth = 0;
+  EpdFontFamily::Style style = EpdFontFamily::REGULAR;
+
+  const auto flushChunk = [&] {
+    if (wordLength == 0) return;
+    word[wordLength] = '\0';
+    wordWidth += renderer.getTextAdvanceX(fontId, word, style);
+    wordLength = 0;
+  };
+  const auto finishWord = [&] {
+    flushChunk();
+    if (wordWidth == 0 || column < 0) return;
+    out.minWidth[column] = static_cast<uint16_t>(std::max<int>(out.minWidth[column], wordWidth));
+    lineWidth += (lineWidth > 0 ? spaceWidth : 0) + wordWidth;
+    wordWidth = 0;
+  };
+  const auto finishLine = [&] {
+    finishWord();
+    if (column >= 0) out.prefWidth[column] = static_cast<uint16_t>(std::max<int>(out.prefWidth[column], lineWidth));
+    lineWidth = 0;
+  };
+  // Returns 1 when the table ends, -1 when it cannot be planned, 0 otherwise.
+  const auto handleTag = [&]() -> int {
+    tagText[tagLength] = '\0';
+    const bool closing = tagText[0] == '/';
+    const char* name = tagText + (closing ? 1 : 0);
+    size_t nameLength = 0;
+    while (name[nameLength] && !isWhitespace(name[nameLength]) && name[nameLength] != '/') ++nameLength;
+    const std::string_view tag(name, nameLength);
+    if (tag == "table") {
+      tableNesting += closing ? -1 : 1;
+      if (tableNesting == 0) return 1;
+      return 0;
+    }
+    if (tableNesting != 1) {
+      finishWord();
+      return 0;
+    }
+    if (tag == "tr" && !closing) {
+      if (inCell) finishLine();
+      inCell = false;
+      column = -1;
+    } else if (tag == "td" || tag == "th") {
+      if (inCell) finishLine();
+      inCell = !closing;
+      if (!closing) {
+        // Spanning cells lay out as stacked rows, so they don't shape the grid.
+        skipCell = strstr(tagText, "colspan") != nullptr || strstr(tagText, "rowspan") != nullptr;
+        if (++column >= static_cast<int>(MAX_GRID_TABLE_COLUMNS)) return -1;
+        out.columns = static_cast<uint8_t>(std::max<int>(out.columns, column + 1));
+        style = tag == "th" ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+      }
+    } else if (tag == "br") {
+      finishLine();
+    } else if (tag == "p" || tag == "div" || tag == "li" || (tag.size() == 2 && tag[0] == 'h')) {
+      finishWord();  // block markup inside a cell collapses to a word boundary
+    }
+    return 0;
+  };
+
+  size_t scanned = 0;
+  while (scanned < MAX_SCAN_BYTES) {
+    const size_t count = file.read(buffer, sizeof(buffer));
+    if (count == 0) return false;
+    scanned += count;
+    for (size_t i = 0; i < count; ++i) {
+      const char c = buffer[i];
+      if (inTag) {
+        if (quote) {
+          if (c == quote) quote = 0;
+        } else if (c == '"' || c == '\'') {
+          quote = c;
+        } else if (c == '>') {
+          inTag = false;
+          const int result = handleTag();
+          if (result != 0) return result > 0 && out.columns >= 2;
+          continue;
+        }
+        if (tagLength + 1 < sizeof(tagText)) {
+          tagText[tagLength++] = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        continue;
+      }
+      if (c == '<') {
+        inTag = true;
+        tagLength = 0;
+        continue;
+      }
+      if (!inCell || skipCell || tableNesting != 1) continue;
+      if (inEntity) {
+        inEntity = c != ';';
+        continue;
+      }
+      if (isWhitespace(c)) {
+        finishWord();
+        continue;
+      }
+      if (wordLength + 1 >= sizeof(word)) flushChunk();
+      // An entity measures roughly as one character.
+      inEntity = c == '&';
+      word[wordLength++] = inEntity ? 'n' : c;
+    }
+  }
+  return false;
+}
+
+// Distributes the viewport across columns the way CSS auto table layout does:
+// natural widths when they fit, otherwise each column keeps its longest word and
+// shares the rest in proportion to how much wrapping it would otherwise need.
+void ChapterHtmlSlimParser::planTableColumns(const TableColumnMeasure& measure) {
+  tableColumnCount = 0;
+  const int columns = measure.columns;
+  if (columns < 2 || columns > static_cast<int>(MAX_GRID_TABLE_COLUMNS)) return;
+  constexpr int padding = TABLE_CELL_HORIZONTAL_PADDING * 2;
+  const int available = viewportWidth;
+  int minWidth[MAX_GRID_TABLE_COLUMNS];
+  int prefWidth[MAX_GRID_TABLE_COLUMNS];
+  int minTotal = 0;
+  int prefTotal = 0;
+  for (int c = 0; c < columns; ++c) {
+    minWidth[c] = measure.minWidth[c] + padding;
+    prefWidth[c] = std::max(minWidth[c], measure.prefWidth[c] + padding);
+    minTotal += minWidth[c];
+    prefTotal += prefWidth[c];
+  }
+  int assigned = 0;
+  for (int c = 0; c < columns; ++c) {
+    int width;
+    if (prefTotal <= available) {
+      width = prefWidth[c] + (available - prefTotal) * prefWidth[c] / prefTotal;
+    } else if (minTotal <= available) {
+      width = minWidth[c] + (available - minTotal) * (prefWidth[c] - minWidth[c]) / (prefTotal - minTotal);
+    } else {
+      width = available * minWidth[c] / minTotal;
+    }
+    if (c + 1 == columns) width = available - assigned;
+    tableColumnWidths[c] = static_cast<uint16_t>(std::max(width, padding + 1));
+    assigned += width;
+  }
+  tableColumnCount = static_cast<uint8_t>(columns);
+}
+
 void ChapterHtmlSlimParser::finishTableRow() {
   closeTableCell();
 
@@ -878,19 +1045,31 @@ void ChapterHtmlSlimParser::finishTableRow() {
   const int16_t lineHeight =
       std::max<int16_t>(1, static_cast<int16_t>(renderer.getLineHeight(fontId) * lineCompression));
   const size_t columnCount = tableRowCells.size();
-  const uint16_t cellWidth = static_cast<uint16_t>(viewportWidth / columnCount);
-
-  // Keep enough width for a few glyphs while allowing ordinary three-column
-  // tables to remain tabular at the default font size in portrait.
-  if (columnCount < 2 || cellWidth <= TABLE_CELL_HORIZONTAL_PADDING * 2 ||
-      cellWidth < lineHeight * TABLE_MIN_CELL_WIDTH_LINE_HEIGHTS) {
+  const bool planned = tableColumnCount == columnCount;
+  uint16_t columnWidths[MAX_GRID_TABLE_COLUMNS] = {};
+  bool fitsGrid = columnCount >= 2;
+  for (size_t column = 0; column < columnCount; ++column) {
+    columnWidths[column] = planned ? tableColumnWidths[column] : static_cast<uint16_t>(viewportWidth / columnCount);
+    // Equal columns keep enough width for a few glyphs so ordinary three-column tables stay
+    // tabular in portrait; planned columns already fit their longest word.
+    fitsGrid = fitsGrid && columnWidths[column] > TABLE_CELL_HORIZONTAL_PADDING * 2 &&
+               (planned || columnWidths[column] >= lineHeight * TABLE_MIN_CELL_WIDTH_LINE_HEIGHTS);
+  }
+  if (!fitsGrid) {
     fallbackTableRowToStacked();
     addTableRowSeparator();
     tableRowStacked = false;
     return;
   }
-
-  const uint16_t textWidth = static_cast<uint16_t>(cellWidth - TABLE_CELL_HORIZONTAL_PADDING * 2);
+  const bool rowIsRtl = tableRowRtl;
+  // Left edge of a logical column; RTL rows mirror the column order.
+  const auto columnX = [&](const size_t column) {
+    int x = 0;
+    for (size_t other = 0; other < columnCount; ++other) {
+      if (rowIsRtl ? other > column : other < column) x += columnWidths[other];
+    }
+    return x;
+  };
   for (auto& lines : tableCellLines) {
     lines.clear();
   }
@@ -899,7 +1078,6 @@ void ChapterHtmlSlimParser::finishTableRow() {
     tableLineVisibleOffsets.reserve(MAX_GRID_TABLE_CELL_WORDS * 2);
   }
   size_t maxLineCount = 0;
-  const bool rowRtl = tableRowRtl;
 
   for (size_t column = 0; column < columnCount; ++column) {
     auto& lines = tableCellLines[column];
@@ -908,7 +1086,7 @@ void ChapterHtmlSlimParser::finishTableRow() {
       lines.reserve(MAX_GRID_TABLE_CELL_WORDS * 2);
     }
     tableRowCells[column]->layoutAndExtractLines(
-        renderer, fontId, textWidth,
+        renderer, fontId, static_cast<uint16_t>(columnWidths[column] - TABLE_CELL_HORIZONTAL_PADDING * 2),
         [this, &lines](std::unique_ptr<TextBlock> line, const uint32_t offset) {
           const size_t lineIndex = lines.size();
           lines.push_back(std::move(line));
@@ -945,8 +1123,8 @@ void ChapterHtmlSlimParser::finishTableRow() {
     const int height = std::min(bottom + 1, static_cast<int>(viewportHeight)) - top;
     if (height <= 0) return;
     for (size_t column = 0; column < columnCount; ++column) {
-      const int x = static_cast<int>(column * cellWidth);
-      const int width = column + 1 == columnCount ? viewportWidth - x : cellWidth + 1;
+      const int x = columnX(column);
+      const int width = x + columnWidths[column] >= viewportWidth ? viewportWidth - x : columnWidths[column] + 1;
       auto box = makeUniqueNoThrow<PageBorderBox>(static_cast<uint16_t>(width), static_cast<uint16_t>(height), sides,
                                                   false, static_cast<int16_t>(x), static_cast<int16_t>(top));
       if (!box) {
@@ -1008,8 +1186,7 @@ void ChapterHtmlSlimParser::finishTableRow() {
 
       auto& line = tableCellLines[column][lineIndex];
       auto style = line->getBlockStyle();
-      const size_t physicalColumn = rowRtl ? columnCount - column - 1 : column;
-      style.marginLeft = static_cast<int16_t>(physicalColumn * cellWidth + TABLE_CELL_HORIZONTAL_PADDING);
+      style.marginLeft = static_cast<int16_t>(columnX(column) + TABLE_CELL_HORIZONTAL_PADDING);
       style.paddingLeft = 0;
       line->setBlockStyle(style);
 
@@ -1182,6 +1359,17 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->tableRowCells.clear();
     self->tableRowCells.reserve(MAX_GRID_TABLE_COLUMNS);
     self->tableBorder = CssBorderSide{};
+    self->tableColumnCount = 0;
+    if (self->xmlParser_) {
+      // Rows stream in one at a time, so plan shared column widths from the raw markup first.
+      HalFile tableFile;
+      TableColumnMeasure measure;
+      if (Storage.openFileForRead("EHP", self->filepath, tableFile) &&
+          tableFile.seek(static_cast<size_t>(XML_GetCurrentByteIndex(self->xmlParser_))) &&
+          self->measureTableColumns(tableFile, measure)) {
+        self->planTableColumns(measure);
+      }
+    }
     for (const CssBorderSide* side :
          {&cssStyle.borderTop, &cssStyle.borderRight, &cssStyle.borderBottom, &cssStyle.borderLeft}) {
       if (!self->tableBorder.visible() && side->visible()) self->tableBorder = *side;
@@ -2669,6 +2857,25 @@ int ChapterHtmlSlimParser::prepareBlockFont() {
   return layoutFontId;
 }
 
+size_t ChapterHtmlSlimParser::paragraphLinesToCarry() const {
+  if (!layoutParagraph || layoutParagraphHasDropCap || !currentPage) return 0;
+  size_t carry = 0;
+  if (paragraphLinesOnPage == 1) {
+    carry = 1;  // the paragraph's first line would sit alone at the page bottom
+  } else if (paragraphLinesOnPage >= 2 && layoutParagraph->linesAfterCurrentLine() == 0) {
+    // The last line would open the next page alone; taking one line along must not
+    // leave an orphan behind.
+    carry = paragraphLinesOnPage >= 3 ? 1 : 2;
+  }
+  // Only this paragraph's own lines move, and never everything on the page.
+  const auto& elements = currentPage->elements;
+  if (carry == 0 || elements.size() <= carry) return 0;
+  for (size_t i = 0; i < carry; ++i) {
+    if (elements[elements.size() - 1 - i]->getTag() != TAG_PageLine) return 0;
+  }
+  return carry;
+}
+
 void ChapterHtmlSlimParser::addLineToPage(std::unique_ptr<TextBlock> line, const uint32_t visibleOffset) {
   const int lineFontId = line->blockFontId(fontId);
   const int rubyShift = line->getRubyShift(renderer.getFontAscenderSize(lineFontId));
@@ -2682,12 +2889,50 @@ void ChapterHtmlSlimParser::addLineToPage(std::unique_ptr<TextBlock> line, const
   }
 
   if (currentPageNextY + lineHeight > viewportHeight) {
+    // Carry a lone first line (orphan), or the line before a lone last line (widow),
+    // over to the next page with the rest of the paragraph.
+    const size_t carry = paragraphLinesToCarry();
+    std::unique_ptr<PageElement> carried[2];
+    std::vector<PageLink> carriedLinks;
+    int16_t carriedTop = 0;
+    for (size_t i = 0; i < carry; ++i) {
+      carried[carry - 1 - i] = std::move(currentPage->elements.back());
+      currentPage->elements.pop_back();
+    }
+    if (carry > 0) {
+      carriedTop = carried[0]->yPos;
+      auto& links = currentPage->links;
+      for (auto it = links.begin(); it != links.end();) {
+        if (it->y + it->height > carriedTop) {
+          if (carriedLinks.empty()) carriedLinks.reserve(links.size());
+          carriedLinks.push_back(*it);
+          it = links.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
+
     setCurrentPageVisibleOffset(visibleOffset);
     emitCurrentPage();
     completedPageCount++;
     currentPage.reset(new Page());
     currentPageNextY = 0;
     currentPageVisibleOffsetSet = false;
+
+    paragraphLinesOnPage = 0;
+    for (size_t i = 0; i < carry; ++i) {
+      const size_t slot = 2 - carry + i;
+      carried[i]->yPos = currentPageNextY;
+      setCurrentPageVisibleOffset(paragraphLineOffsets[slot]);
+      noteContent(currentPageNextY, currentPageNextY + paragraphLineHeights[slot]);
+      currentPageNextY = static_cast<int16_t>(currentPageNextY + paragraphLineHeights[slot]);
+      currentPage->elements.push_back(std::move(carried[i]));
+      paragraphLinesOnPage++;
+    }
+    for (const PageLink& link : carriedLinks) {
+      currentPage->addLink(link.href, link.x, static_cast<int16_t>(link.y - carriedTop), link.width, link.height);
+    }
   }
   setCurrentPageVisibleOffset(visibleOffset);
 
@@ -2717,6 +2962,13 @@ void ChapterHtmlSlimParser::addLineToPage(std::unique_ptr<TextBlock> line, const
   currentPage->elements.push_back(std::move(pageLine));
   noteContent(currentPageNextY, currentPageNextY + lineHeight);
   currentPageNextY += lineHeight;
+  if (layoutParagraph) {
+    if (paragraphLinesOnPage < UINT8_MAX) paragraphLinesOnPage++;
+    paragraphLineOffsets[0] = paragraphLineOffsets[1];
+    paragraphLineHeights[0] = paragraphLineHeights[1];
+    paragraphLineOffsets[1] = visibleOffset;
+    paragraphLineHeights[1] = static_cast<int16_t>(lineHeight);
+  }
 }
 
 void ChapterHtmlSlimParser::makePages() {
@@ -2751,6 +3003,8 @@ void ChapterHtmlSlimParser::makePages() {
   }
 
   layoutCurrentBlock(true);
+  paragraphLinesOnPage = 0;
+  layoutParagraphHasDropCap = false;
 
   // Latch again after layout: extractLine can drop a whole line (TextBlock
   // arena OOM) during the call above, after the pre-layout latch ran, and the

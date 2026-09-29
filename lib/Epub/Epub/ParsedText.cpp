@@ -796,10 +796,13 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
   }
   const size_t lineCount = std::min(maxLines, includeLastLine ? lineBreakIndices.size() : lineBreakIndices.size() - 1);
 
+  const bool endIsKnown = includeLastLine && lineCount == lineBreakIndices.size();
   for (size_t i = 0; i < lineCount; ++i) {
+    linesAfterCurrent = endIsKnown ? static_cast<int>(lineCount - 1 - i) : -1;
     extractLine(i, pageWidth, wordWidths, wordContinues, wordNoSpaceBefore, lineBreakIndices, processLine, renderer,
                 fontId);
   }
+  linesAfterCurrent = -1;
 
   // Remove consumed words so size() reflects only remaining words
   if (lineCount > 0) {
