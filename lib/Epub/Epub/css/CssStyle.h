@@ -159,15 +159,6 @@ struct CssPropertyFlags {
            pageBreakBefore || pageBreakAfter || borderTop || borderRight || borderBottom || borderLeft || shaded ||
            floatLeft || initialLetter || whiteSpace;
   }
-
-  void clearAll() {
-    textAlign = fontStyle = fontWeight = textDecoration = textIndent = 0;
-    marginTop = marginBottom = marginLeft = marginRight = 0;
-    paddingTop = paddingBottom = paddingLeft = paddingRight = 0;
-    imageHeight = imageWidth = display = direction = verticalAlign = listStyleType = fontSize = 0;
-    smallCaps = pageBreakBefore = pageBreakAfter = 0;
-    borderTop = borderRight = borderBottom = borderLeft = shaded = floatLeft = initialLetter = whiteSpace = 0;
-  }
 };
 
 // Cache serializes defined flags as uint32_t with bit indices 0..30.
@@ -369,24 +360,5 @@ struct CssStyle {
     return borderTop.visible() || borderRight.visible() || borderBottom.visible() || borderLeft.visible();
   }
 
-  void reset() {
-    textAlign = CssTextAlign::Left;
-    fontStyle = CssFontStyle::Normal;
-    fontWeight = CssFontWeight::Normal;
-    textDecoration = CssTextDecoration::None;
-    direction = CssTextDirection::Ltr;
-    textIndent = CssLength{};
-    marginTop = marginBottom = marginLeft = marginRight = CssLength{};
-    paddingTop = paddingBottom = paddingLeft = paddingRight = CssLength{};
-    imageHeight = imageWidth = fontSize = CssLength{};
-    display = CssDisplay::Block;
-    verticalAlign = CssVerticalAlign::Baseline;
-    listStyleType = CssListStyleType::Disc;
-    smallCaps = pageBreakBefore = pageBreakAfter = false;
-    borderTop = borderRight = borderBottom = borderLeft = CssBorderSide{};
-    shaded = floatLeft = false;
-    initialLetter = 0;
-    preserveWhitespace = false;
-    defined.clearAll();
-  }
+  void reset() { *this = CssStyle{}; }
 };

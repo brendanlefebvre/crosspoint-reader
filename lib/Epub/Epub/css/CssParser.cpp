@@ -98,12 +98,7 @@ bool lessIgnoringAsciiCase(const std::string_view a, const std::string_view b) {
 }
 
 void sortIgnoringAsciiCase(std::string_view* items, const size_t count) {
-  for (size_t i = 1; i < count; ++i) {
-    const std::string_view item = items[i];
-    size_t j = i;
-    for (; j > 0 && lessIgnoringAsciiCase(item, items[j - 1]); --j) items[j] = items[j - 1];
-    items[j] = item;
-  }
+  std::sort(items, items + count, lessIgnoringAsciiCase);
 }
 
 // FNV-1a over lowercase ASCII. Never 0, so 0 can mean "absent".
