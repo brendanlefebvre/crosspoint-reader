@@ -200,7 +200,7 @@ struct CssStyle {
   bool floatLeft = false;     // float: left (marks drop-cap spans and ::first-letter rules)
   uint8_t initialLetter = 0;  // initial-letter: lines a drop cap spans, 0 = normal
 
-  bool preserveWhitespace = false;  // white-space: pre-wrap
+  bool preserveWhitespace = false;  // white-space: pre, pre-wrap or break-spaces
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
 

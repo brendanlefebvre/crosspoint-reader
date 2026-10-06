@@ -416,8 +416,8 @@ TEST_F(ChapterBlockDecorationTest, PreWrapPreservesSpacesAndLineBreaksAcrossCall
   EXPECT_STREQ(first.wordText(3), " ");
   EXPECT_STREQ(first.wordText(4), " ");
   EXPECT_STREQ(first.wordText(5), "word");
-  // The fixture gives each glyph eight pixels: two literal spaces, no inserted gaps.
-  EXPECT_EQ(first.wordXpos(2) - first.wordXpos(0), 16);
+  // Literal spaces use the font's space advance, with no inserted word gaps.
+  EXPECT_EQ(first.wordXpos(2) - first.wordXpos(0), 2 * renderer.getSpaceWidth(0, EpdFontFamily::REGULAR));
   EXPECT_EQ(lines[1]->yPos - lines[0]->yPos, renderer.getLineHeight(0));
 }
 
@@ -637,7 +637,9 @@ TEST_F(ChapterTableBorderTest, RichCellsPreserveParagraphStylesAndFollowingFlow)
     if (i > 0) EXPECT_GT(lines[i]->yPos, lines[i - 1]->yPos);
   }
   EXPECT_GE(lines[1]->xPos, 24);
-  EXPECT_GT(lines[2]->xPos, lines[1]->xPos);
+  const auto& left = *static_cast<const PageLine*>(lines[1])->getBlock();
+  const auto& right = *static_cast<const PageLine*>(lines[2])->getBlock();
+  EXPECT_GT(lines[2]->xPos + right.wordXpos(0), lines[1]->xPos + left.wordXpos(0));
   EXPECT_EQ(lines[3]->xPos, 0);
 }
 
@@ -689,6 +691,31 @@ TEST_F(ChapterInlineSizeTest, SpanHoldingWholeBlockSizesIt) {
   text(" ");
   close("p");
   EXPECT_EQ(firstLineFontId(), NOTOSERIF_18_FONT_ID);
+}
+
+TEST_F(ChapterInlineSizeTest, ShortSizedHeadingSpanFallsBackToStyledText) {
+  open("h1", "font-size: 1em; font-style: italic");
+  open("span", "font-size: 2em");
+  text("II");
+  close("span");
+  close("h1");
+  open("p", nullptr);
+  text("After");
+  close("p");
+
+  EXPECT_TRUE(elementsWithTag(TAG_PageDropCap).empty());
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 2u);
+  const auto& heading = *static_cast<const PageLine*>(lines[0])->getBlock();
+  ASSERT_EQ(heading.wordCount(), 1u);
+  EXPECT_STREQ(heading.wordText(0), "II");
+  EXPECT_EQ(heading.getBlockStyle().fontId, NOTOSERIF_18_FONT_ID);
+  EXPECT_EQ(heading.wordStyle(0), EpdFontFamily::BOLD | EpdFontFamily::ITALIC);
+  const auto& following = *static_cast<const PageLine*>(lines[1])->getBlock();
+  ASSERT_EQ(following.wordCount(), 1u);
+  EXPECT_STREQ(following.wordText(0), "After");
+  EXPECT_EQ(following.wordStyle(0), EpdFontFamily::REGULAR);
+  EXPECT_EQ(following.wordFontId(0, NOTOSERIF_14_FONT_ID), NOTOSERIF_14_FONT_ID);
 }
 
 TEST_F(ChapterInlineSizeTest, NestedSpansCompoundTheirSizes) {

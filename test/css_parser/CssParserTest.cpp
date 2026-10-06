@@ -509,3 +509,22 @@ TEST_F(CssParserTest, PreservedWhitespaceSurvivesCacheAndNormalOverridesIt) {
   style.applyOver(reader.resolveStyle("span", "normal"));
   EXPECT_FALSE(style.preserveWhitespace);
 }
+
+TEST_F(CssParserTest, WhiteSpacePreservationValuesAndUnsupportedOverrides) {
+  for (const char* value : {"pre", "pre-wrap", "break-spaces", "PRE", "BREAK-SPACES !important"}) {
+    const std::string declaration = std::string("white-space: ") + value;
+    auto style = CssParser::parseInlineStyle(declaration);
+    EXPECT_TRUE(style.defined.whiteSpace) << value;
+    EXPECT_TRUE(style.preserveWhitespace) << value;
+    style.applyOver(CssParser::parseInlineStyle("white-space: normal"));
+    EXPECT_TRUE(style.defined.whiteSpace);
+    EXPECT_FALSE(style.preserveWhitespace);
+  }
+  const auto unsupported = CssParser::parseInlineStyle("white-space: nowrap");
+  EXPECT_FALSE(unsupported.defined.whiteSpace);
+  auto style = CssParser::parseInlineStyle("white-space: pre; white-space: nowrap");
+  EXPECT_TRUE(style.defined.whiteSpace);
+  EXPECT_TRUE(style.preserveWhitespace);
+  style.applyOver(unsupported);
+  EXPECT_TRUE(style.preserveWhitespace);
+}

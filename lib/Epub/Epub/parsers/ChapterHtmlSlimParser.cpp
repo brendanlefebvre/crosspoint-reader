@@ -2566,6 +2566,13 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
     }
   }
 
+  // A captured letter without body text is ordinary block content.
+  if (headerOrBlockTag && strcmp(name, "br") != 0 && !insideSkippedSubtree && self->currentTextBlock &&
+      self->currentTextBlock->isEmpty() && self->dropCap.length > 0) {
+    self->cancelDropCapToWord();
+    self->flushPartWordBuffer();
+  }
+
   self->depth -= 1;
 
   // The captured drop-cap letter waits for its block's layout.

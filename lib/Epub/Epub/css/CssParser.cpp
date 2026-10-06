@@ -940,8 +940,10 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
   value = stripTrailingImportant(value);
 
   if (iequalsAscii(name, "white-space")) {
-    if (iequalsAscii(value, "pre-wrap") || iequalsAscii(value, "normal")) {
-      style.preserveWhitespace = iequalsAscii(value, "pre-wrap");
+    const bool preserve =
+        iequalsAscii(value, "pre-wrap") || iequalsAscii(value, "pre") || iequalsAscii(value, "break-spaces");
+    if (preserve || iequalsAscii(value, "normal")) {
+      style.preserveWhitespace = preserve;
       style.defined.whiteSpace = 1;
     }
   } else if (iequalsAscii(name, "text-align")) {

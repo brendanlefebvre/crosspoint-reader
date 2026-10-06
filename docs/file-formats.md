@@ -92,43 +92,17 @@ if (parsedSize != fileSize) {
 
 ### Version 53
 
-The header adds `paragraphIndentSpaces` after `extraParagraphSpacing` for cache
-validation. Each TextBlock ends with a `hasWordFonts` flag. When set, it is
+Each TextBlock's BlockStyle stores a signed 32-bit `fontId` after
+`characterSpacing`: the renderer font the line was laid out in, or 0 for the
+section font. Each TextBlock ends with a `hasWordFonts` flag. When set, it is
 followed by three signed 32-bit font ids and one slot byte per word: 0 draws the
 word in the block's font, `n` in font `n - 1`. Mixed-size words share the baseline
 of the tallest font. SD (.cpfont) and vector fonts use sized variants for
-headings, CSS font-size blocks, inline runs and drop caps.
+headings, CSS font-size blocks, inline runs and drop caps. A font-size span
+holding a whole paragraph sizes that paragraph.
 
-Layout changes also keep headings with following content, preserve paragraph
-continuity across soft flushes, retain whitespace and inherited block emphasis,
-and distinguish inline `<br>` breaks from standalone blank lines. Missing
-full-block (`U+2588`) and black-square (`U+25A0`) symbols use font-sized solid
-rectangles.
-
-Table cells honor CSS padding in grid and stacked layouts. Plain-text rows share
-a 160-token / 2 KB budget; rows containing blocks or images use full-width flow
-to preserve paragraphs and illustrations. Older sections are rebuilt for the
-header, word-font data and layout changes.
-
-CSS cache version 16 adds a boolean `preserveWhitespace` byte after `initialLetter`
-and uses defined-property bit 30 for `white-space`.
-
-### Version 52
-
-Version 52 keeps the version 51 serialized layout unchanged. It was bumped
-because table columns are now sized from a pre-scan of the table's markup
-instead of splitting the width equally, and page breaks now avoid leaving a
-paragraph's first line alone at a page bottom or its last line alone at a page
-top. Cached pages from version 51 no longer match.
-
-### Version 51
-
-Version 51 keeps the version 50 serialized layout unchanged. It was bumped
-because bordered tables now frame each grid cell with `PageBorderBox` elements
-instead of a row rule, and a font-size span holding a whole paragraph now sizes
-that paragraph. Cached pages from version 50 no longer match.
-
-### Version 50
+Word style bit 128 (`SMALL_CAPS`) marks CSS small caps; the word text keeps its
+original case.
 
 Pages gain two element types. `TAG_PageDropCap` (4) is an initial letter drawn
 scaled up from a font's glyph: position (its `yPos` is the baseline of the last
@@ -136,18 +110,42 @@ spanned line), the renderer font id, the scale in 1/256ths, the word style and
 up to 12 bytes of UTF-8 text. `TAG_PageBorderBox` (5) is a CSS border and/or
 background shade around one page's slice of a block element: position, size,
 width and style for the top, right, bottom and left edges (a side split off by a
-page break has width 0), and a shade flag. Sections from earlier versions are
-rebuilt.
+page break has width 0), and a shade flag.
 
-### Version 49
+Layout changes keep headings with following content and avoid leaving a
+paragraph's first line alone at a page bottom or its last line alone at a page
+top. Preserved whitespace and inherited block emphasis affect word placement
+and styles. Inline `<br>` breaks omit paragraph spacing, while standalone and
+consecutive breaks add blank lines.
 
-Each TextBlock's BlockStyle stores a signed 32-bit `fontId` after
-`characterSpacing`: the renderer font the line was laid out in when CSS
-`font-size` (or a heading's default size) selected a different built-in size,
-or 0 for the section font. Sections from earlier versions are rebuilt.
+Table columns are sized from a markup pre-scan rather than equal widths.
+Bordered tables frame each grid cell with `PageBorderBox` elements. Cells honor
+CSS padding in grid and stacked layouts. Plain-text rows share a 160-token /
+2 KB budget; rows containing blocks or images use full-width flow to preserve
+paragraphs and illustrations. Older sections are rebuilt for the serialized
+font data, page elements and layout changes.
 
-Word style bit 128 (`SMALL_CAPS`) marks CSS small caps; the word text keeps its
-original case. It needs no version change because earlier sections never set it.
+CSS cache version 16 adds a boolean `preserveWhitespace` byte after `initialLetter`
+and uses defined-property bit 30 for `white-space`.
+
+### Version 52
+
+The serialized layout is unchanged. Missing full-block (`U+2588`) and black-square
+(`U+25A0`) symbols now use font-sized solid rectangles instead of replacement
+glyphs. Rebuild older sections so cached line breaks and word positions match
+their new widths.
+
+### Version 51
+
+The serialized layout is unchanged. Paragraph continuity and top spacing are
+preserved across soft flushes. Older sections are rebuilt for the updated layout.
+
+### Version 50
+
+The header adds `paragraphIndentSpaces` after `extraParagraphSpacing`. The value
+participates in cache validation, so sections with different indentation settings
+are rebuilt. Version 49 was used by pre-release builds with a different header
+layout and is skipped to prevent reuse of those caches.
 
 ### Version 48
 
