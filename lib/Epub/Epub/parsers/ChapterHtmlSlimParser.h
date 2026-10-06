@@ -149,14 +149,15 @@ class ChapterHtmlSlimParser {
   void breakPageCarryingLines(size_t carry, size_t paragraphLines, uint32_t visibleOffset);
   std::vector<BoxScope> boxScopes;
   static constexpr size_t MAX_GRID_TABLE_COLUMNS = 4;
-  static constexpr size_t MAX_GRID_TABLE_CELL_WORDS = 32;
-  static constexpr size_t MAX_GRID_TABLE_CELL_BYTES = 512;
+  // ponytail: buffer at most 160 tokens / 2 KB per row; larger rows use stacked flow.
+  static constexpr size_t MAX_GRID_TABLE_ROW_WORDS = 160;
+  static constexpr size_t MAX_GRID_TABLE_ROW_BYTES = 2048;
   int tableDepth = 0;
   bool insideTableCell = false;
   bool tableRowStacked = false;
   bool tableRowRtl = false;
   uint16_t tableRowsSpannedRemaining = 0;
-  size_t tableCellTextBytes = 0;
+  size_t tableRowTextBytes = 0;
   std::vector<std::unique_ptr<ParsedText>> tableRowCells;
   std::array<std::vector<std::unique_ptr<TextBlock>>, MAX_GRID_TABLE_COLUMNS> tableCellLines;
   std::vector<uint32_t> tableLineVisibleOffsets;

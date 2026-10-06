@@ -90,6 +90,13 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 59
+
+The serialized layout is unchanged. Table cells honor CSS padding in grid and
+stacked layouts. Plain-text rows share a 160-token / 2 KB budget instead of a
+32-token / 512-byte cap per cell, retaining columns for longer uneven cells.
+Older sections are rebuilt for the updated text positions.
+
 ### Version 58
 
 The serialized layout is unchanged. Table rows containing block elements or images
@@ -281,7 +288,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 58
+#define EXPECTED_VERSION 59
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256

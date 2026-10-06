@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -835,6 +836,140 @@ TEST_F(ChapterTableBorderTest, RowsUsePlannedColumnWidths) {
   ASSERT_EQ(lines.size(), 2u);
   EXPECT_EQ(lines[0]->xPos, 4);
   EXPECT_EQ(lines[1]->xPos, 104);
+}
+
+TEST_F(ChapterTableBorderTest, CssCellPaddingInsetsContentAndReservesRowHeight) {
+  open("table", nullptr);
+  parser.tableColumnWidths = {100, 380};
+  parser.tableColumnCount = 2;
+  open("tr", nullptr);
+  open("td", "padding: 9px 17px 13px 11px; text-align: right");
+  text("alpha");
+  close("td");
+  open("td", "padding: 3px 0 5px");
+  text("beta");
+  close("td");
+  close("tr");
+  close("table");
+  const int rowBottom = parser.currentPageNextY;
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_EQ(lines[0]->xPos, 11);
+  EXPECT_EQ(lines[1]->xPos, 100);
+  EXPECT_EQ(lines[0]->yPos, 9);
+  EXPECT_EQ(lines[1]->yPos, 3);
+  const auto& first = *static_cast<const PageLine*>(lines[0])->getBlock();
+  EXPECT_EQ(lines[0]->xPos + first.wordXpos(0) + renderer.getTextAdvanceX(0, "alpha", EpdFontFamily::REGULAR), 83);
+  EXPECT_GE(rowBottom, 9 + renderer.getLineHeight(0) + 13);
+}
+
+TEST_F(ChapterTableBorderTest, PaddedRowsBreakBeforeTheBottomPaddingOverflows) {
+  parser.viewportHeight = 48;
+  table(nullptr, "padding: 8px");
+  table(nullptr, "padding: 8px");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 4u);
+  ASSERT_EQ(pages.size(), 2u);
+  for (const auto* line : lines) {
+    EXPECT_EQ(line->yPos, 8);
+    EXPECT_LE(line->yPos + renderer.getLineHeight(0) + 8, parser.viewportHeight);
+  }
+}
+
+TEST_F(ChapterTableBorderTest, StackedCellPaddingSurroundsChildParagraphs) {
+  const size_t initialDepth = parser.blockStyleStack.size();
+  open("table", nullptr);
+  open("tr", nullptr);
+  open("td", "padding: 7px 8px 9px 10px");
+  open("p", nullptr);
+  text("Inside");
+  close("p");
+  close("td");
+  close("tr");
+  close("table");
+  EXPECT_EQ(parser.blockStyleStack.size(), initialDepth);
+  const int rowBottom = parser.currentPageNextY;
+  open("p", nullptr);
+  text("Outside");
+  close("p");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_EQ(lines[0]->xPos, 10);
+  EXPECT_EQ(lines[0]->yPos, 7);
+  EXPECT_GE(rowBottom, 7 + renderer.getLineHeight(0) + 9);
+  EXPECT_EQ(lines[1]->xPos, 0);
+}
+
+TEST_F(ChapterTableBorderTest, LongTwoColumnFixtureKeepsColumnsAcrossPages) {
+  parser.viewportWidth = 480;
+  parser.viewportHeight = 64;
+  const char* cells[] = {
+      "This is one very long sentence. It is part of the first cell of this table. It is quite nice.",
+      "This is the second cell. It will probably overflow into the next page. Lorem ipsum dolor sit amet, consetetur "
+      "sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam "
+      "voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita kasd gubergren, no sea takimata "
+      "sanctus est Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam "
+      "nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua. At vero eos et "
+      "accusam et justo duo dolores et ea rebum. Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum "
+      "dolor sit amet."};
+  std::multiset<std::string> expected[2];
+  open("table", nullptr);
+  parser.tableColumnWidths = {160, 320};
+  parser.tableColumnCount = 2;
+  open("tr", nullptr);
+  for (size_t column = 0; column < 2; ++column) {
+    open("td", "padding: 3px 6px");
+    std::istringstream input(cells[column]);
+    for (std::string word; input >> word;) expected[column].insert(word);
+    // XML can split a cell across arbitrary character-data callbacks.
+    const std::string content(cells[column]);
+    for (size_t offset = 0; offset < content.size(); offset += 17) text(content.substr(offset, 17));
+    close("td");
+    EXPECT_FALSE(parser.tableRowStacked);
+  }
+  close("tr");
+  close("table");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_GT(pages.size(), 1u);
+  std::multiset<std::string> actual[2];
+  for (const auto* element : lines) {
+    const auto& line = *static_cast<const PageLine*>(element);
+    const size_t column = line.xPos == 6 ? 0 : 1;
+    EXPECT_EQ(line.xPos, column == 0 ? 6 : 166);
+    EXPECT_LE(line.yPos + renderer.getLineHeight(0), parser.viewportHeight);
+    for (uint16_t i = 0; i < line.getBlock()->wordCount(); ++i) {
+      actual[column].insert(line.getBlock()->wordText(i));
+    }
+  }
+  EXPECT_EQ(actual[0], expected[0]);
+  EXPECT_EQ(actual[1], expected[1]);
+}
+
+TEST_F(ChapterTableBorderTest, RowBudgetFallsBackAndResetsForTheNextRow) {
+  open("table", nullptr);
+  open("tr", nullptr);
+  for (int column = 0; column < 2; ++column) {
+    open("td", nullptr);
+    text(words(100));
+    close("td");
+  }
+  EXPECT_TRUE(parser.tableRowStacked);
+  close("tr");
+  open("tr", nullptr);
+  EXPECT_EQ(parser.tableRowTextBytes, 0u);
+  for (int column = 0; column < 2; ++column) {
+    open("td", nullptr);
+    text(words(70));
+    close("td");
+    EXPECT_FALSE(parser.tableRowStacked);
+  }
+  close("tr");
+  close("table");
+  size_t count = 0;
+  for (const auto* element : elementsWithTag(TAG_PageLine)) {
+    count += static_cast<const PageLine*>(element)->getBlock()->wordCount();
+  }
+  EXPECT_EQ(count, 340u);
 }
 
 class ChapterWidowOrphanTest : public ChapterBlockDecorationTest {
