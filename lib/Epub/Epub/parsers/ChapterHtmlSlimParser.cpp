@@ -729,9 +729,7 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle, cons
       // open. Merge those into the new style so the first child in a container inherits
       // the container's vertical spacing.
       const auto style = currentTextBlock->getBlockStyle();
-      BlockStyle incoming = blockStyle;
-
-      currentTextBlock->setBlockStyle(style.getCombinedBlockStyle(incoming, BlockStyle::CombineAxis::Vertical));
+      currentTextBlock->setBlockStyle(style.getCombinedBlockStyle(blockStyle, BlockStyle::CombineAxis::Vertical));
       inlineSize = InlineSizeState{};
 
       flushPendingAnchor();
