@@ -27,7 +27,12 @@ class GfxRenderer {
     return left == 0 || left == ' ' || right == ' ' ? 0 : tracking;
   }
   bool isFontCacheScanning() const { return false; }
-  void drawLine(int, int, int, int, int, bool) const {}
+  mutable int lastLineY = -1;
+  mutable int drawnLineCount = 0;
+  void drawLine(int, int y, int, int, int, bool) const {
+    lastLineY = y;
+    ++drawnLineCount;
+  }
   void fillRect(int, int, int, int, bool = true) const {}
   void fillRectDither(int, int, int, int, Color) const {}
   // Fixture glyphs: 8 px advance, capitals 10 px tall.

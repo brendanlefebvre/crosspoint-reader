@@ -223,7 +223,6 @@ void TextBlock::render(const GfxRenderer& renderer, const int sectionFontId, con
 
   struct DecorationLineTracker {
     EpdFontFamily::Style style;
-    int yOffset;
     int startX = -1;
     int endX = -1;
     int yPos = 0;
@@ -236,10 +235,9 @@ void TextBlock::render(const GfxRenderer& renderer, const int sectionFontId, con
     }
   };
 
-  // Offsets from each word's baseline.
   DecorationLineTracker decorationLines[] = {
-      {EpdFontFamily::UNDERLINE, 2},
-      {EpdFontFamily::STRIKETHROUGH, -ascender / 5},
+      {EpdFontFamily::UNDERLINE},
+      {EpdFontFamily::STRIKETHROUGH},
   };
 
   const auto flushDecoration = [&](DecorationLineTracker& line) {
@@ -335,7 +333,23 @@ void TextBlock::render(const GfxRenderer& renderer, const int sectionFontId, con
           continue;
         }
 
-        const int lineY = wordY + wordAscender + line.yOffset;
+        int offset = 2;
+        if (line.style == EpdFontFamily::STRIKETHROUGH) {
+          int32_t advance = 0;
+          int height = 0;
+          const bool smallCaps = (currentStyle & EpdFontFamily::SMALL_CAPS) != 0;
+          if (!renderer.getCodepointMetrics(wordFont, smallCaps ? 'X' : 'x', currentStyle, advance, height) ||
+              height <= 0) {
+            height = wordAscender * 2 / 3;
+          }
+          if ((currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
+            height = (height + 1) / 2;
+          } else if (smallCaps) {
+            height = (height * 3 + 3) / 4;
+          }
+          offset = -std::max(1, height / 2);
+        }
+        const int lineY = wordY + wordAscender + offset;
         if (line.active() && line.yPos != lineY) {
           flushDecoration(line);
         }
