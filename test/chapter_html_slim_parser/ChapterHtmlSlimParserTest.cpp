@@ -602,6 +602,69 @@ TEST_F(ChapterTableBorderTest, UnborderedTableKeepsRowRule) {
   EXPECT_EQ(elementsWithTag(TAG_PageHorizontalRule).size(), 1u);
 }
 
+TEST_F(ChapterTableBorderTest, RichCellsPreserveParagraphStylesAndFollowingFlow) {
+  const size_t initialDepth = parser.blockStyleStack.size();
+  open("table", nullptr);
+  open("tr", nullptr);
+  open("td", nullptr);
+  text("Firstcell");
+  close("td");
+  open("td", nullptr);
+  open("p", "margin-left: 24px; font-style: italic; font-size: 0.75em");
+  EXPECT_TRUE(parser.tableRowStacked);
+  EXPECT_TRUE(parser.effectiveItalic);
+  EXPECT_FLOAT_EQ(parser.currentTextBlock->getBlockStyle().fontScale, 0.75f);
+  text("Entryone");
+  close("p");
+  open("p", "text-align: right");
+  EXPECT_FALSE(parser.effectiveItalic);
+  text("Entrytwo");
+  close("p");
+  close("td");
+  close("tr");
+  close("table");
+  EXPECT_EQ(parser.blockStyleStack.size(), initialDepth);
+  open("p", nullptr);
+  text("Outside");
+  close("p");
+
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 4u);
+  const char* expected[] = {"Firstcell", "Entryone", "Entrytwo", "Outside"};
+  for (size_t i = 0; i < lines.size(); ++i) {
+    EXPECT_STREQ(static_cast<const PageLine*>(lines[i])->getBlock()->wordText(0), expected[i]);
+    if (i > 0) EXPECT_GT(lines[i]->yPos, lines[i - 1]->yPos);
+  }
+  EXPECT_GE(lines[1]->xPos, 24);
+  EXPECT_GT(lines[2]->xPos, lines[1]->xPos);
+  EXPECT_EQ(lines[3]->xPos, 0);
+}
+
+TEST_F(ChapterTableBorderTest, CellImagesUseNormalImageHandlingAndRespectDisplayNone) {
+  parser.imageRendering = 1;  // Exercise the shared image fallback without a decoder.
+  open("table", nullptr);
+  open("tr", nullptr);
+  open("td", nullptr);
+  const XML_Char* hidden[] = {"style", "display:none", "alt", "hidden", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "img", hidden);
+  close("img");
+  EXPECT_FALSE(parser.tableRowStacked);
+  const XML_Char* visible[] = {"alt", "skull", nullptr};
+  ChapterHtmlSlimParser::startElement(&parser, "img", visible);
+  close("img");
+  EXPECT_TRUE(parser.tableRowStacked);
+  close("td");
+  close("tr");
+  close("table");
+
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 1u);
+  const auto* block = static_cast<const PageLine*>(lines[0])->getBlock();
+  ASSERT_EQ(block->wordCount(), 2u);
+  EXPECT_STREQ(block->wordText(0), "[Image:");
+  EXPECT_STREQ(block->wordText(1), "skull]");
+}
+
 class ChapterInlineSizeTest : public ChapterBlockDecorationTest {
  protected:
   void SetUp() override {

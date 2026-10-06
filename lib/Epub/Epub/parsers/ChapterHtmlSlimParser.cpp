@@ -54,7 +54,7 @@ constexpr uint8_t TABLE_ROW_SEPARATOR_THICKNESS = 1;
 constexpr int16_t TABLE_MIN_CELL_WIDTH_LINE_HEIGHTS = 3;
 
 constexpr const char* HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5", "h6"};
-constexpr const char* BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote", "ul", "ol", "pre"};
+constexpr const char* BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote", "ul", "ol", "pre", "figure"};
 constexpr const char* BOLD_TAGS[] = {"b", "strong"};
 constexpr const char* ITALIC_TAGS[] = {"i", "em"};
 constexpr const char* UNDERLINE_TAGS[] = {"u", "ins"};
@@ -1506,32 +1506,11 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     return;
   }
 
-  if (self->tableDepth >= 1 && strcmp(name, "hr") == 0) {
-    self->depth += 1;
-    return;
-  }
-
-  if (self->tableDepth >= 1 && self->insideTableCell && isHeaderOrBlock(name)) {
-    // Collapse block markup inside a cell to a word boundary.
-    if (self->partWordBufferIndex > 0) {
-      self->flushPartWordBuffer();
-    }
-    self->nextWordContinues = false;
-    self->depth += 1;
-    return;
-  }
-
-  if (self->tableDepth >= 1 && self->insideTableCell && matches(name, IMAGE_TAGS, std::size(IMAGE_TAGS))) {
-    // Preserve alt text without allocating an image framebuffer in the row.
-    const char* alt = getAttribute(atts, "alt");
-    if (alt && alt[0] != '\0') {
-      self->syntheticCharacterData = true;
-      self->characterData(userData, alt, strlen(alt));
-      self->syntheticCharacterData = false;
-    }
-    self->skipUntilDepth = self->depth;
-    self->depth += 1;
-    return;
+  if (self->tableDepth >= 1 && self->insideTableCell &&
+      (isHeaderOrBlock(name) || strcmp(name, "hr") == 0 || matches(name, IMAGE_TAGS, std::size(IMAGE_TAGS)))) {
+    // ponytail: rich cells use full-width flow; keep a grid only for plain inline content.
+    if (self->partWordBufferIndex > 0) self->flushPartWordBuffer();
+    self->fallbackTableRowToStacked();
   }
 
   if (matches(name, IMAGE_TAGS, std::size(IMAGE_TAGS))) {
@@ -2541,15 +2520,6 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
     self->tableDepth -= 1;
     self->depth -= 1;
     LOG_DBG("EHP", "nested table flattened into enclosing cell");
-    return;
-  }
-
-  if (!insideSkippedSubtree && self->tableDepth >= 1 && self->insideTableCell && headerOrBlockTag) {
-    if (self->partWordBufferIndex > 0) {
-      self->flushPartWordBuffer();
-    }
-    self->nextWordContinues = false;
-    self->depth -= 1;
     return;
   }
 

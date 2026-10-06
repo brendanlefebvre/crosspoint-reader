@@ -90,6 +90,12 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 58
+
+The serialized layout is unchanged. Table rows containing block elements or images
+use full-width flow to preserve paragraphs and illustrations. Older sections are
+rebuilt so previously omitted content can appear.
+
 ### Version 57
 
 The serialized layout is unchanged. Preserved whitespace and inherited block
@@ -275,7 +281,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 57
+#define EXPECTED_VERSION 58
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256
