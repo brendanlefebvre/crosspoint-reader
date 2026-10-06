@@ -90,57 +90,28 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 59
-
-The serialized layout is unchanged. Table cells honor CSS padding in grid and
-stacked layouts. Plain-text rows share a 160-token / 2 KB budget instead of a
-32-token / 512-byte cap per cell, retaining columns for longer uneven cells.
-Older sections are rebuilt for the updated text positions.
-
-### Version 58
-
-The serialized layout is unchanged. Table rows containing block elements or images
-use full-width flow to preserve paragraphs and illustrations. Older sections are
-rebuilt so previously omitted content can appear.
-
-### Version 57
-
-The serialized layout is unchanged. Preserved whitespace and inherited block
-emphasis change word placement and styles, so older sections are rebuilt.
-CSS cache version 16 adds a boolean `preserveWhitespace` byte after `initialLetter`
-and uses defined-property bit 30 for `white-space`.
-
-### Version 56
-
-The serialized layout is unchanged. Standalone and consecutive `<br>` elements
-add one blank line each, while inline breaks omit paragraph spacing and leading
-breaks add no blank space. Older sections are rebuilt for the updated positions.
-
-### Version 55
-
-The header adds `paragraphIndentSpaces` after `extraParagraphSpacing` for cache
-validation. Paragraph continuity and top spacing are preserved across soft
-flushes. Missing full-block (`U+2588`) and black-square (`U+25A0`) symbols use
-font-sized solid rectangles. Older sections are rebuilt to account for the
-header and layout changes.
-
-### Version 54
-
-Version 54 keeps the version 53 serialized layout unchanged. It was bumped
-because SD (.cpfont) and vector fonts now size headings, CSS font-size blocks,
-inline runs and drop caps through sized variants of the reader font, whose ids
-(`BlockStyle.fontId`, word fonts, `PageDropCap.fontId`) derive from the reader
-font id and point size. Cached pages from version 53 laid those out at the body
-size.
-
 ### Version 53
 
-Each TextBlock ends with a `hasWordFonts` flag. When set, it is followed by
-three signed 32-bit font ids and one slot byte per word: 0 draws the word in the
-block's font, `n` in font `n - 1`. Lines mixing inline CSS font sizes use it;
-their words share the baseline of the tallest font. Headings are also kept on
-the same page as the content that follows them. Sections from earlier versions
-are rebuilt.
+The header adds `paragraphIndentSpaces` after `extraParagraphSpacing` for cache
+validation. Each TextBlock ends with a `hasWordFonts` flag. When set, it is
+followed by three signed 32-bit font ids and one slot byte per word: 0 draws the
+word in the block's font, `n` in font `n - 1`. Mixed-size words share the baseline
+of the tallest font. SD (.cpfont) and vector fonts use sized variants for
+headings, CSS font-size blocks, inline runs and drop caps.
+
+Layout changes also keep headings with following content, preserve paragraph
+continuity across soft flushes, retain whitespace and inherited block emphasis,
+and distinguish inline `<br>` breaks from standalone blank lines. Missing
+full-block (`U+2588`) and black-square (`U+25A0`) symbols use font-sized solid
+rectangles.
+
+Table cells honor CSS padding in grid and stacked layouts. Plain-text rows share
+a 160-token / 2 KB budget; rows containing blocks or images use full-width flow
+to preserve paragraphs and illustrations. Older sections are rebuilt for the
+header, word-font data and layout changes.
+
+CSS cache version 16 adds a boolean `preserveWhitespace` byte after `initialLetter`
+and uses defined-property bit 30 for `white-space`.
 
 ### Version 52
 
@@ -288,7 +259,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 59
+#define EXPECTED_VERSION 53
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256
