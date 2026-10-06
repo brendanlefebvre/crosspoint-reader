@@ -90,6 +90,14 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 55
+
+The header adds `paragraphIndentSpaces` after `extraParagraphSpacing` for cache
+validation. Paragraph continuity and top spacing are preserved across soft
+flushes. Missing full-block (`U+2588`) and black-square (`U+25A0`) symbols use
+font-sized solid rectangles. Older sections are rebuilt to account for the
+header and layout changes.
+
 ### Version 54
 
 Version 54 keeps the version 53 serialized layout unchanged. It was bumped
@@ -254,7 +262,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 54
+#define EXPECTED_VERSION 55
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256
@@ -448,6 +456,7 @@ struct SectionBin {
     s32 fontId;
     float lineCompression;
     bool extraParagraphSpacing;
+    u8 paragraphIndentSpaces;
     u8 paragraphAlignment;
     u16 viewportWidth;
     u16 viewportHeight;

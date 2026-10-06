@@ -70,13 +70,14 @@ class ParsedText {
   std::deque<std::string> rubyTexts;
   BlockStyle blockStyle;
   uint8_t wordSpacingPercent = 100;
-  bool extraParagraphSpacing;
+  uint8_t paragraphIndentSpaces;
   bool hyphenationEnabled;
   bool focusReadingEnabled;
   bool isNaturalAlign;
   bool hasRtlWord;
   bool droppedWords = false;
   int linesAfterCurrent = -1;
+  bool firstLineConsumed = false;
   std::vector<std::string> reorderedWordsScratch;
   std::vector<EpdFontFamily::Style> reorderedStylesScratch;
   std::vector<uint16_t> reorderedWidthsScratch;
@@ -112,10 +113,10 @@ class ParsedText {
   std::vector<uint16_t> calculateWordWidths(const GfxRenderer& renderer, int fontId);
 
  public:
-  explicit ParsedText(const bool extraParagraphSpacing, const bool hyphenationEnabled = false,
-                      const bool focusReadingEnabled = false, const BlockStyle& blockStyle = BlockStyle())
+  explicit ParsedText(const bool hyphenationEnabled = false, const bool focusReadingEnabled = false,
+                      const BlockStyle& blockStyle = BlockStyle(), const uint8_t paragraphIndentSpaces = 2)
       : blockStyle(blockStyle),
-        extraParagraphSpacing(extraParagraphSpacing),
+        paragraphIndentSpaces(paragraphIndentSpaces),
         hyphenationEnabled(hyphenationEnabled),
         focusReadingEnabled(focusReadingEnabled),
         isNaturalAlign(false),
@@ -133,6 +134,7 @@ class ParsedText {
   }
   std::string getRubyTextAt(size_t index) const { return index < rubyTexts.size() ? rubyTexts[index] : std::string(); }
   void ensureRubyCapacity();
+  void suppressFirstLineIndent() { firstLineConsumed = true; }
   void setBlockStyle(const BlockStyle& blockStyle) { this->blockStyle = blockStyle; }
   BlockStyle& getBlockStyle() { return blockStyle; }
   size_t size() const { return words.size(); }

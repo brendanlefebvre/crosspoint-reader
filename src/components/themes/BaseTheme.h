@@ -12,6 +12,8 @@ struct RecentBook;
 namespace freeink {
 namespace ui {
 struct HeaderProps;
+struct BitmapRef;
+struct ListItem;
 }  // namespace ui
 }  // namespace freeink
 
@@ -139,6 +141,7 @@ enum UIIcon {
   Settings,
   Transfer,
   Library,
+  Plugins,
   Wifi,
   Hotspot,
   Bookmark,
@@ -230,6 +233,8 @@ class BaseTheme {
   virtual ~BaseTheme() = default;
 
   // Component drawing methods
+  static freeink::ui::BitmapRef checkboxIcon(bool checked);
+  static void setCheckboxRow(freeink::ui::ListItem& item, bool checked);
   static void drawCoverPlaceholder(const GfxRenderer& renderer, Rect rect);
   // Draws a pre-dithered cover thumb 1:1, centered and clipped to fill the
   // slot. Rescaling a dithered bitmap aliases badly, so overflow is cropped.
@@ -243,7 +248,7 @@ class BaseTheme {
   // Shared by every theme's drawButtonHints(): centres a hint label in its box,
   // wrapping to two lines rather than overflowing when it's too wide to fit.
   static void drawHintLabel(const GfxRenderer& renderer, int fontId, const char* label, int x, int boxWidth, int boxTop,
-                            int boxHeight, int singleLineYOffset);
+                            int boxHeight);
   virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
   // Menu row height as DRAWN by drawButtonMenu. HomeActivity builds its touch
   // grid from this, so hit bands always match the visuals (RoundedRaff derives
