@@ -235,7 +235,7 @@ class ChapterHtmlSlimParser {
   uint32_t parseStartTime_ = 0;
 
   void updateEffectiveInlineStyle();
-  void startNewTextBlock(const BlockStyle& blockStyle);
+  void startNewTextBlock(const BlockStyle& blockStyle, bool paragraphEnd = true);
   void flushPendingAnchor();
   void completeCurrentPage();
   void emitCurrentPage();
@@ -261,7 +261,7 @@ class ChapterHtmlSlimParser {
   void finishTableRow();
   void addTableRowSeparator();
   void setCurrentPageVisibleOffset(uint32_t offset);
-  void makePages(bool includeLastLine = true);
+  void makePages(bool includeLastLine = true, bool paragraphEnd = true);
   void applyBlockFontScale(BlockStyle& blockStyle, const CssStyle& cssStyle, const char* tagName) const;
   int fontIdForScale(float scale) const;
   int prepareBlockFont();

@@ -346,6 +346,58 @@ class ChapterBlockDecorationTest : public ChapterHtmlSlimParserTest {
   }
 };
 
+TEST_F(ChapterBlockDecorationTest, RepeatedSectionBreaksEachAddOneLine) {
+  for (int breaks = 1; breaks <= 3; ++breaks) {
+    open("p", "margin-top: 1px");
+    text("Before");
+    close("p");
+    const int before = parser.currentPageNextY;
+    for (int i = 0; i < breaks; ++i) {
+      const XML_Char* attrs[] = {"class", "section-br", "style", "display: block", nullptr};
+      ChapterHtmlSlimParser::startElement(&parser, "br", attrs);
+      close("br");
+    }
+    EXPECT_EQ(parser.currentPageNextY - before, breaks * renderer.getLineHeight(0));
+    open("p", "margin-top: 1px");
+    text("After");
+    close("p");
+  }
+}
+
+TEST_F(ChapterBlockDecorationTest, InlineBreakDoesNotAddParagraphSpacing) {
+  parser.extraParagraphSpacing = true;
+  open("p", "margin-top: 1px; margin-bottom: 9px");
+  text("First");
+  open("br", nullptr);
+  close("br");
+  text("Second");
+  close("p");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_EQ(lines[1]->yPos - lines[0]->yPos, renderer.getLineHeight(0));
+}
+
+TEST_F(ChapterBlockDecorationTest, LeadingBreakDoesNotAddBlankSpace) {
+  open("br", nullptr);
+  close("br");
+  open("p", nullptr);
+  text("Start");
+  close("p");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 1u);
+  EXPECT_EQ(lines[0]->yPos, 0);
+}
+
+TEST_F(ChapterBlockDecorationTest, BreakAfterHeadingAddsOneLine) {
+  open("h2", nullptr);
+  text("Heading");
+  close("h2");
+  const int before = parser.currentPageNextY;
+  open("br", nullptr);
+  close("br");
+  EXPECT_EQ(parser.currentPageNextY - before, renderer.getLineHeight(0));
+}
+
 TEST_F(ChapterBlockDecorationTest, FloatedLeadingSpanBecomesDropCap) {
   open("p", nullptr);
   open("span", "float: left; font-size: 3em");

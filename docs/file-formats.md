@@ -90,6 +90,12 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 56
+
+The serialized layout is unchanged. Standalone and consecutive `<br>` elements
+add one blank line each, while inline breaks omit paragraph spacing and leading
+breaks add no blank space. Older sections are rebuilt for the updated positions.
+
 ### Version 55
 
 The header adds `paragraphIndentSpaces` after `extraParagraphSpacing` for cache
@@ -262,7 +268,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 55
+#define EXPECTED_VERSION 56
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256

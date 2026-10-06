@@ -45,11 +45,6 @@ struct BlockStyle {
   // Headings: keep the block's last lines on the page with whatever follows. Layout-time only.
   bool keepWithNext = false;
 
-  // Set when this block was created by a <br> element. Used by startNewTextBlock to inject
-  // a full line-height gap when the <br> block stays empty (section-break use case).
-  // NOT propagated through getCombinedBlockStyle so it can't leak into sibling blocks.
-  bool fromBrElement = false;
-
   // Combined insets (margin + padding)
   [[nodiscard]] int16_t leftInset() const { return marginLeft + paddingLeft; }
   [[nodiscard]] int16_t rightInset() const { return marginRight + paddingRight; }
@@ -124,9 +119,6 @@ struct BlockStyle {
       result.fontScaleDefined = true;
     }
 
-    // fromBrElement is consumed by startNewTextBlock when an empty <br> block
-    // is merged with the following paragraph; never propagate it further.
-    result.fromBrElement = false;
     return result;
   }
 

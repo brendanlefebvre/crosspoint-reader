@@ -692,7 +692,7 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
 }
 
 // start a new text block if needed
-void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
+void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle, const bool paragraphEnd) {
   nextWordContinues = false;  // New block = new paragraph, no continuation
   if (currentTextBlock) {
     // already have a text block running and it is empty - just reuse it
@@ -704,13 +704,6 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
       // the container's vertical spacing.
       const auto style = currentTextBlock->getBlockStyle();
       BlockStyle incoming = blockStyle;
-      if (style.fromBrElement) {
-        // The empty block was created by a <br> section separator. Inject a full line of
-        // blank space before the following paragraph so the scene/section break is visible.
-        // This only fires when the <br> block stayed empty (i.e. no inline text was added).
-        const int16_t lineHeight = static_cast<int16_t>(renderer.getLineHeight(fontId, lineCompression));
-        incoming.marginTop = static_cast<int16_t>(incoming.marginTop + lineHeight);
-      }
 
       currentTextBlock->setBlockStyle(style.getCombinedBlockStyle(incoming, BlockStyle::CombineAxis::Vertical));
       inlineSize = InlineSizeState{};
@@ -730,7 +723,7 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
       return;
     }
 
-    makePages();
+    makePages(true, paragraphEnd);
   }
   // If the pending anchor is a TOC chapter boundary, force a page break after the previous
   // block is flushed so the chapter starts on a fresh page.
@@ -1969,24 +1962,15 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         // flush word preceding <br/> to currentTextBlock before calling startNewTextBlock
         self->flushPartWordBuffer();
       }
-      // A <br> after text is a line break: start the next block with the container's
-      // vertical margins stripped, matching browsers, which never apply paragraph
-      // margins at a <br>. This is what keeps <br>-per-paragraph books (common CJK
-      // web-novel formatting) from re-adding container spacing at every paragraph
-      // and collapsing page capacity.
-      // A <br> on an empty block (consecutive <br>s, or a standalone <br> between
-      // blocks) is a scene-break separator: keep the container margins so deposited
-      // vertical spacing survives. Either way the block is tagged so that if it
-      // stays empty, startNewTextBlock injects a full line-height gap when the next
-      // block opens; once text follows the tag is inert.
-      // Style comes from the block style stack, not the current block, so a closed
-      // element's style can't leak through (#2679).
-      BlockStyle brStyle = self->blockStyleStack.back();
-      if (self->currentTextBlock && !self->currentTextBlock->isEmpty()) {
-        brStyle = brStyle.withoutTop().withoutBottom();
+      const bool hasText = self->currentTextBlock && !self->currentTextBlock->isEmpty();
+      BlockStyle brStyle = self->blockStyleStack.back().withoutTop().withoutBottom();
+      if (!hasText && self->currentPage && !self->currentPage->elements.empty()) {
+        const int lineHeight = self->renderer.getLineHeight(self->fontId, self->lineCompression);
+        self->currentPageNextY =
+            static_cast<int16_t>(std::min<int>(self->viewportHeight, self->currentPageNextY + lineHeight));
       }
-      brStyle.fromBrElement = true;
-      self->startNewTextBlock(brStyle);
+      self->startNewTextBlock(brStyle, false);
+      if (hasText && self->currentTextBlock) self->currentTextBlock->suppressFirstLineIndent();
     } else {
       self->currentCssStyle = cssStyle;
       auto blockStyle = userAlignmentBlockStyle;
@@ -3044,7 +3028,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::unique_ptr<TextBlock> line, const
   recentLineOffsets[recentLineCount++] = visibleOffset;
 }
 
-void ChapterHtmlSlimParser::makePages(const bool includeLastLine) {
+void ChapterHtmlSlimParser::makePages(const bool includeLastLine, const bool paragraphEnd) {
   if (!currentTextBlock) {
     LOG_ERR("EHP", "!! No text block to make pages for !!");
     return;
@@ -3097,6 +3081,8 @@ void ChapterHtmlSlimParser::makePages(const bool includeLastLine) {
       }
       pendingFootnotes.clear();
     }
+
+    if (!paragraphEnd) return;
 
     // Apply bottom spacing after the paragraph (stored in pixels)
     if (blockStyle.marginBottom > 0) {
