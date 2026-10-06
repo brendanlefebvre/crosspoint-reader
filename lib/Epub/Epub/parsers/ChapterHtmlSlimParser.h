@@ -80,6 +80,7 @@ class ChapterHtmlSlimParser {
     bool hasSup = false, sup = false;
     bool hasSub = false, sub = false;
     bool hasSmallCaps = false, smallCaps = false;
+    bool hasWhiteSpace = false, preserveWhitespace = false;
     // Inline font size: a multiple of the parent size, or of the body size when rem.
     bool hasFontScale = false, fontScaleRem = false;
     float fontScale = 1.0f;
@@ -101,6 +102,7 @@ class ChapterHtmlSlimParser {
   bool effectiveSup = false;
   bool effectiveSub = false;
   bool effectiveSmallCaps = false;
+  bool effectivePreserveWhitespace = false;
   bool pendingPageBreak = false;  // set when a page-break-after element closes
 
   // Initial letter captured from a ::first-letter block or a leading float/initial-letter span,
@@ -256,6 +258,7 @@ class ChapterHtmlSlimParser {
   void applyPendingPageBreak();
   void pushBlockStyle(const BlockStyle& accumulated);
   void flushPartWordBuffer();
+  void breakTextLine(const BlockStyle& style);
   void fallbackTableRowToStacked();
   void closeTableCell();
   void finishTableRow();
@@ -268,9 +271,9 @@ class ChapterHtmlSlimParser {
   static EpdFontFamily::Style fontStyleForTextDecoration(CssTextDecoration decoration);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyTextDecorationToEntry(StyleStackEntry& entry, const CssStyle& css);
-  static void applySmallCapsToEntry(StyleStackEntry& entry, const CssStyle& css);
+  static void applyInlinePresentationToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyVerticalAlignToEntry(StyleStackEntry& entry, const CssStyle& css);
-  void pushTableTextStyleEntry(const CssStyle& cssStyle);
+  void pushBlockTextStyleEntry(const CssStyle& cssStyle);
   void pushDecorationStyleEntry(CssTextDecoration defaultDecoration, const CssStyle& cssStyle);
   void emitHorizontalRule(const BlockStyle& blockStyle);
   // XML callbacks

@@ -398,6 +398,66 @@ TEST_F(ChapterBlockDecorationTest, BreakAfterHeadingAddsOneLine) {
   EXPECT_EQ(parser.currentPageNextY - before, renderer.getLineHeight(0));
 }
 
+TEST_F(ChapterBlockDecorationTest, PreWrapPreservesSpacesAndLineBreaksAcrossCallbacks) {
+  parser.extraParagraphSpacing = true;
+  open("p", "white-space: pre-wrap; text-align: justify");
+  text("  first");
+  text("  word\n");
+  text("second");
+  close("p");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 2u);
+  const auto& first = *static_cast<const PageLine*>(lines[0])->getBlock();
+  ASSERT_EQ(first.wordCount(), 6);
+  EXPECT_STREQ(first.wordText(0), " ");
+  EXPECT_STREQ(first.wordText(1), " ");
+  EXPECT_STREQ(first.wordText(2), "first");
+  EXPECT_STREQ(first.wordText(3), " ");
+  EXPECT_STREQ(first.wordText(4), " ");
+  EXPECT_STREQ(first.wordText(5), "word");
+  // The fixture gives each glyph eight pixels: two literal spaces, no inserted gaps.
+  EXPECT_EQ(first.wordXpos(2) - first.wordXpos(0), 16);
+  EXPECT_EQ(lines[1]->yPos - lines[0]->yPos, renderer.getLineHeight(0));
+}
+
+TEST_F(ChapterBlockDecorationTest, BlockEmphasisIsInheritedOverriddenAndRestored) {
+  open("blockquote", "font-style: italic");
+  open("p", nullptr);
+  text("Inherited");
+  close("p");
+  open("p", "font-style: normal");
+  text("Normal");
+  close("p");
+  open("p", nullptr);
+  text("Restored");
+  close("p");
+  close("blockquote");
+  open("p", nullptr);
+  text("Outside");
+  close("p");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 4u);
+  for (size_t i = 0; i < lines.size(); ++i) {
+    const auto& block = *static_cast<const PageLine*>(lines[i])->getBlock();
+    EXPECT_EQ((block.wordStyle(0) & EpdFontFamily::ITALIC) != 0, i == 0 || i == 2);
+  }
+}
+
+TEST_F(ChapterBlockDecorationTest, PreElementPreservesNewlinesWithoutLeakingToFollowingParagraph) {
+  open("pre", nullptr);
+  text("one\ntwo");
+  close("pre");
+  open("p", nullptr);
+  text("three\nfour");
+  close("p");
+  const auto lines = elementsWithTag(TAG_PageLine);
+  ASSERT_EQ(lines.size(), 3u);
+  const auto& last = *static_cast<const PageLine*>(lines[2])->getBlock();
+  ASSERT_EQ(last.wordCount(), 2);
+  EXPECT_STREQ(last.wordText(0), "three");
+  EXPECT_STREQ(last.wordText(1), "four");
+}
+
 TEST_F(ChapterBlockDecorationTest, FloatedLeadingSpanBecomesDropCap) {
   open("p", nullptr);
   open("span", "float: left; font-size: 3em");

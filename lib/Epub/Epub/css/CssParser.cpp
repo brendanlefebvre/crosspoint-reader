@@ -431,8 +431,8 @@ constexpr std::array STYLE_LENGTH_FIELDS = {
 };
 constexpr size_t STYLE_LENGTH_FIELD_COUNT = STYLE_LENGTH_FIELDS.size();
 constexpr size_t STYLE_WIRE_BYTES =
-    5 + STYLE_LENGTH_FIELD_COUNT * (sizeof(decltype(CssLength::value)) + 1) + 6 + 11 + sizeof(uint32_t);
-constexpr uint32_t CSS_DEFINED_BITS_MASK = (1u << 30) - 1;
+    5 + STYLE_LENGTH_FIELD_COUNT * (sizeof(decltype(CssLength::value)) + 1) + 6 + 12 + sizeof(uint32_t);
+constexpr uint32_t CSS_DEFINED_BITS_MASK = (1u << 31) - 1;
 constexpr uint8_t MAX_INITIAL_LETTER = 6;
 
 void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
@@ -464,6 +464,7 @@ void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   out[offset++] = style.shaded ? 1 : 0;
   out[offset++] = style.floatLeft ? 1 : 0;
   out[offset++] = style.initialLetter;
+  out[offset++] = style.preserveWhitespace ? 1 : 0;
 
   uint32_t definedBits = 0;
   if (style.defined.textAlign) definedBits |= 1 << 0;
@@ -496,6 +497,7 @@ void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   if (style.defined.shaded) definedBits |= 1 << 27;
   if (style.defined.floatLeft) definedBits |= 1 << 28;
   if (style.defined.initialLetter) definedBits |= 1 << 29;
+  if (style.defined.whiteSpace) definedBits |= 1u << 30;
   memcpy(out + offset, &definedBits, sizeof(definedBits));
 }
 
@@ -563,6 +565,9 @@ bool decodeStyleWire(const uint8_t (&in)[STYLE_WIRE_BYTES], CssStyle& style) {
   style.shaded = shaded != 0;
   style.floatLeft = floatLeft != 0;
   style.initialLetter = initialLetter;
+  const uint8_t preserveWhitespace = in[offset++];
+  if (preserveWhitespace > 1) return false;
+  style.preserveWhitespace = preserveWhitespace != 0;
 
   uint32_t definedBits = 0;
   memcpy(&definedBits, in + offset, sizeof(definedBits));
@@ -597,6 +602,7 @@ bool decodeStyleWire(const uint8_t (&in)[STYLE_WIRE_BYTES], CssStyle& style) {
   style.defined.shaded = (definedBits & 1 << 27) != 0;
   style.defined.floatLeft = (definedBits & 1 << 28) != 0;
   style.defined.initialLetter = (definedBits & 1 << 29) != 0;
+  style.defined.whiteSpace = (definedBits & 1u << 30) != 0;
   return true;
 }
 
@@ -938,7 +944,12 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
 
   value = stripTrailingImportant(value);
 
-  if (iequalsAscii(name, "text-align")) {
+  if (iequalsAscii(name, "white-space")) {
+    if (iequalsAscii(value, "pre-wrap") || iequalsAscii(value, "normal")) {
+      style.preserveWhitespace = iequalsAscii(value, "pre-wrap");
+      style.defined.whiteSpace = 1;
+    }
+  } else if (iequalsAscii(name, "text-align")) {
     style.textAlign = interpretAlignment(value);
     style.defined.textAlign = 1;
   } else if (iequalsAscii(name, "font-style")) {

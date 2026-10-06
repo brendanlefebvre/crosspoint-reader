@@ -90,6 +90,13 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 57
+
+The serialized layout is unchanged. Preserved whitespace and inherited block
+emphasis change word placement and styles, so older sections are rebuilt.
+CSS cache version 16 adds a boolean `preserveWhitespace` byte after `initialLetter`
+and uses defined-property bit 30 for `white-space`.
+
 ### Version 56
 
 The serialized layout is unchanged. Standalone and consecutive `<br>` elements
@@ -268,7 +275,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 56
+#define EXPECTED_VERSION 57
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256

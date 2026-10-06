@@ -124,7 +124,7 @@ class ParsedText {
   ~ParsedText() = default;
 
   void addWord(std::string word, EpdFontFamily::Style fontStyle, bool underline = false, bool attachToPrevious = false,
-               uint32_t visibleTextOffset = 0, uint8_t linkId = 0, uint8_t sizeSlot = 0);
+               uint32_t visibleTextOffset = 0, uint8_t linkId = 0, uint8_t sizeSlot = 0, bool noSpaceBefore = false);
   uint8_t addLinkTarget(const char* href);
   bool linkTargetMatches(uint8_t linkId, const char* href) const;
   void setRubyForWordAt(size_t index, const std::string& ruby);
@@ -135,6 +135,7 @@ class ParsedText {
   std::string getRubyTextAt(size_t index) const { return index < rubyTexts.size() ? rubyTexts[index] : std::string(); }
   void ensureRubyCapacity();
   void suppressFirstLineIndent() { firstLineConsumed = true; }
+  void resetFirstLineIndent() { firstLineConsumed = false; }
   void setBlockStyle(const BlockStyle& blockStyle) { this->blockStyle = blockStyle; }
   BlockStyle& getBlockStyle() { return blockStyle; }
   size_t size() const { return words.size(); }

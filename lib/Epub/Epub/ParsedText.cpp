@@ -442,7 +442,7 @@ bool ParsedText::storeWord(const std::string_view text, WordStore::StoredWord& o
 
 void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle, const bool underline,
                          const bool attachToPrevious, const uint32_t visibleTextOffset, const uint8_t linkId,
-                         const uint8_t sizeSlot) {
+                         const uint8_t sizeSlot, const bool noSpaceBefore) {
   if (word.empty()) return;
 
   // The device fonts carry no combining-mark positioning, so EPUB text stored in NFD
@@ -487,7 +487,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   };
 
   bool effectiveAttachToPrevious = attachToPrevious;
-  bool effectiveNoSpaceBefore = false;
+  bool effectiveNoSpaceBefore = noSpaceBefore;
   // Only a glued token (attachToPrevious == true, i.e. no whitespace separated it from the
   // previous one in the source) may be turned into a gap-less break opportunity. When real
   // whitespace separated the two words, that space is content and must be rendered: Korean
@@ -518,6 +518,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     wordNoSpaceBefore.reserve(newCapacity);
     wordFocusBoundary.reserve(newCapacity);
     wordLinkIds.reserve(newCapacity);
+    wordSizeSlots.reserve(newCapacity);
     wordVisibleOffsetDeltas.reserve(newCapacity);
   };
 

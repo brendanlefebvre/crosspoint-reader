@@ -117,6 +117,7 @@ struct CssPropertyFlags {
   uint16_t shaded : 1;
   uint16_t floatLeft : 1;
   uint16_t initialLetter : 1;
+  uint16_t whiteSpace : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -148,14 +149,15 @@ struct CssPropertyFlags {
         borderLeft(0),
         shaded(0),
         floatLeft(0),
-        initialLetter(0) {}
+        initialLetter(0),
+        whiteSpace(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
            marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight || imageHeight ||
            imageWidth || display || direction || verticalAlign || listStyleType || fontSize || smallCaps ||
            pageBreakBefore || pageBreakAfter || borderTop || borderRight || borderBottom || borderLeft || shaded ||
-           floatLeft || initialLetter;
+           floatLeft || initialLetter || whiteSpace;
   }
 
   void clearAll() {
@@ -164,14 +166,14 @@ struct CssPropertyFlags {
     paddingTop = paddingBottom = paddingLeft = paddingRight = 0;
     imageHeight = imageWidth = display = direction = verticalAlign = listStyleType = fontSize = 0;
     smallCaps = pageBreakBefore = pageBreakAfter = 0;
-    borderTop = borderRight = borderBottom = borderLeft = shaded = floatLeft = initialLetter = 0;
+    borderTop = borderRight = borderBottom = borderLeft = shaded = floatLeft = initialLetter = whiteSpace = 0;
   }
 };
 
-// Cache serializes defined flags as uint32_t with bit indices 0..29.
+// Cache serializes defined flags as uint32_t with bit indices 0..30.
 static_assert(sizeof(CssPropertyFlags) <= sizeof(uint32_t),
               "CssPropertyFlags exceeds 32 bits; update cache read/write in CssParser.cpp");
-static_assert(sizeof(CssPropertyFlags) * 8 >= 30,
+static_assert(sizeof(CssPropertyFlags) * 8 >= 31,
               "CssPropertyFlags has fewer bits than properties; update bitfield widths");
 
 // Represents a collection of CSS style properties
@@ -206,6 +208,8 @@ struct CssStyle {
   bool shaded = false;        // light background-color, drawn as a gray fill
   bool floatLeft = false;     // float: left (marks drop-cap spans and ::first-letter rules)
   uint8_t initialLetter = 0;  // initial-letter: lines a drop cap spans, 0 = normal
+
+  bool preserveWhitespace = false;  // white-space: pre-wrap
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
 
@@ -328,6 +332,10 @@ struct CssStyle {
       floatLeft = base.floatLeft;
       defined.floatLeft = 1;
     }
+    if (base.defined.whiteSpace) {
+      preserveWhitespace = base.preserveWhitespace;
+      defined.whiteSpace = 1;
+    }
     if (base.defined.initialLetter) {
       initialLetter = base.initialLetter;
       defined.initialLetter = 1;
@@ -378,6 +386,7 @@ struct CssStyle {
     borderTop = borderRight = borderBottom = borderLeft = CssBorderSide{};
     shaded = floatLeft = false;
     initialLetter = 0;
+    preserveWhitespace = false;
     defined.clearAll();
   }
 };

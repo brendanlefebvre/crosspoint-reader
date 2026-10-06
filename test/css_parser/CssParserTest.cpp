@@ -495,3 +495,17 @@ TEST_F(CssParserTest, CacheHydrationRejectsNonFiniteStyleLengths) {
 }
 
 }  // namespace
+
+TEST_F(CssParserTest, PreservedWhitespaceSurvivesCacheAndNormalOverridesIt) {
+  CssParser writer(cachePath());
+  ASSERT_EQ(loadCss(writer, ".mono { white-space: pre-wrap; } .normal { white-space: normal; }"),
+            CssParser::ParseResult::Complete);
+  ASSERT_TRUE(writer.saveToCache(true));
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  auto style = reader.resolveStyle("p", "mono");
+  ASSERT_TRUE(style.defined.whiteSpace);
+  EXPECT_TRUE(style.preserveWhitespace);
+  style.applyOver(reader.resolveStyle("span", "normal"));
+  EXPECT_FALSE(style.preserveWhitespace);
+}
