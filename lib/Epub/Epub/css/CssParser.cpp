@@ -723,7 +723,8 @@ void CssParser::noteRuleShape(const std::string_view storedKey) {
 CssParser::RuleInsertResult CssParser::insertOrMerge(const KeyPieces& key, const CssStyle& style) {
   bool exact = false;
   const size_t position = lowerBound(key, exact);
-  if (exact) {
+  // Only adjacent rules can merge without moving older declarations past other selectors.
+  if (exact && entries_[position].offset + entries_[position].length == selectorPoolSize_) {
     const uint16_t currentStyleIndex = entries_[position].styleIndex;
     CssStyle merged = stylePool_[currentStyleIndex];
     merged.applyOver(style);
@@ -1436,24 +1437,40 @@ CssStyle CssParser::resolveStyle(const std::string_view tagName, const std::stri
 
   struct Match {
     uint32_t specificity;
-    uint16_t styleIndex;
+    uint16_t entryIndex;
   };
   Match matches[MAX_STYLE_MATCHES];
   size_t matchCount = 0;
-  const auto addMatch = [&](const uint32_t specificity, const uint16_t styleIndex) {
-    if (matchCount < MAX_STYLE_MATCHES) matches[matchCount++] = {specificity, styleIndex};
+  Match lastApplied{};
+  bool hasLastApplied = false;
+  // Selector text is appended in source order, including across stylesheets.
+  const auto precedes = [this](const Match& a, const Match& b) {
+    return a.specificity < b.specificity ||
+           (a.specificity == b.specificity && entries_[a.entryIndex].offset < entries_[b.entryIndex].offset);
+  };
+  const auto addMatch = [&](const uint32_t specificity, const uint16_t entryIndex) {
+    const Match match{specificity, entryIndex};
+    if (hasLastApplied && !precedes(lastApplied, match)) return;
+    size_t position = 0;
+    while (position < matchCount && precedes(matches[position], match)) ++position;
+    if (position == MAX_STYLE_MATCHES) return;
+    if (matchCount < MAX_STYLE_MATCHES) ++matchCount;
+    for (size_t i = matchCount - 1; i > position; --i) matches[i] = matches[i - 1];
+    matches[position] = match;
   };
 
   KeyPieces key;
   const auto lookup = [&](const uint32_t specificity) {
     bool exact = false;
     const size_t position = lowerBound(key, exact);
-    if (exact) addMatch(specificity, entries_[position].styleIndex);
+    for (size_t i = position; i < entryCount_ && compareEntryToPieces(entries_[i], key) == 0; ++i) {
+      addMatch(specificity, static_cast<uint16_t>(i));
+    }
     if (!hasContextualRules_ || ancestorCount == 0 || !key.add(CONTEXT_SEPARATOR)) return;
     for (size_t i = lowerBound(key, exact); i < entryCount_ && compareEntryToPieces(entries_[i], key, true) == 0; ++i) {
       const std::string_view context = selectorAt(i).substr(key.length);
       if (ancestorsMatch(context, ancestors, ancestorCount)) {
-        addMatch(specificity + contextSpecificity(context), entries_[i].styleIndex);
+        addMatch(specificity + contextSpecificity(context), static_cast<uint16_t>(i));
       }
     }
     key.count--;
@@ -1462,58 +1479,59 @@ CssStyle CssParser::resolveStyle(const std::string_view tagName, const std::stri
 
   const size_t subsetClassCount = std::min(classCount, MAX_COMPOUND_SUBSET_CLASSES);
   const bool useIdRules = hasIdRules_ && !idAttr.empty();
-  for (uint32_t withId = 0; withId <= (useIdRules ? 1u : 0u); ++withId) {
-    for (uint32_t withTag = 0; withTag <= 1; ++withTag) {
-      key = KeyPieces{};
-      if (withTag) key.add(tagName);
-      if (withId) {
-        key.add(ID_MARKER);
-        key.add(idAttr);
-      }
-      const KeyPieces base = key;
-      const auto addPseudo = [&] {
-        if (firstLetter) key.add(FIRST_LETTER_MARKER);
-      };
-      if (withTag || withId) {
-        addPseudo();
-        lookup(packSpecificity(withId, 0, withTag));
-      }
-
-      for (size_t i = 0; i < classCount; ++i) {
-        key = base;
-        key.add(CLASS_MARKER);
-        key.add(classes[i]);
-        addPseudo();
-        lookup(packSpecificity(withId, 1, withTag));
-      }
-
-      if (!hasCompoundRules_) continue;
-      for (uint32_t mask = 1; mask < (1u << subsetClassCount); ++mask) {
-        const auto bits = static_cast<uint32_t>(__builtin_popcount(mask));
-        if (bits < 2) continue;
-        key = base;
-        for (size_t i = 0; i < subsetClassCount; ++i) {
-          if (mask & (1u << i)) {
-            key.add(CLASS_MARKER);
-            key.add(classes[i]);
-          }
+  // Process additional matches in bounded batches instead of dropping repeated rules.
+  do {
+    matchCount = 0;
+    for (uint32_t withId = 0; withId <= (useIdRules ? 1u : 0u); ++withId) {
+      for (uint32_t withTag = 0; withTag <= 1; ++withTag) {
+        key = KeyPieces{};
+        if (withTag) key.add(tagName);
+        if (withId) {
+          key.add(ID_MARKER);
+          key.add(idAttr);
         }
-        addPseudo();
-        lookup(packSpecificity(withId, bits, withTag));
+        const KeyPieces base = key;
+        const auto addPseudo = [&] {
+          if (firstLetter) key.add(FIRST_LETTER_MARKER);
+        };
+        if (withTag || withId) {
+          addPseudo();
+          lookup(packSpecificity(withId, 0, withTag));
+        }
+
+        for (size_t i = 0; i < classCount; ++i) {
+          key = base;
+          key.add(CLASS_MARKER);
+          key.add(classes[i]);
+          addPseudo();
+          lookup(packSpecificity(withId, 1, withTag));
+        }
+
+        if (!hasCompoundRules_) continue;
+        for (uint32_t mask = 1; mask < (1u << subsetClassCount); ++mask) {
+          const auto bits = static_cast<uint32_t>(__builtin_popcount(mask));
+          if (bits < 2) continue;
+          key = base;
+          for (size_t i = 0; i < subsetClassCount; ++i) {
+            if (mask & (1u << i)) {
+              key.add(CLASS_MARKER);
+              key.add(classes[i]);
+            }
+          }
+          addPseudo();
+          lookup(packSpecificity(withId, bits, withTag));
+        }
       }
     }
-  }
 
-  // Stable insertion sort: equal specificity keeps enumeration order.
-  for (size_t i = 1; i < matchCount; ++i) {
-    const Match match = matches[i];
-    size_t j = i;
-    for (; j > 0 && matches[j - 1].specificity > match.specificity; --j) matches[j] = matches[j - 1];
-    matches[j] = match;
-  }
-  for (size_t i = 0; i < matchCount; ++i) {
-    result.applyOver(stylePool_[matches[i].styleIndex]);
-  }
+    for (size_t i = 0; i < matchCount; ++i) {
+      result.applyOver(stylePool_[entries_[matches[i].entryIndex].styleIndex]);
+    }
+    if (matchCount > 0) {
+      lastApplied = matches[matchCount - 1];
+      hasLastApplied = true;
+    }
+  } while (matchCount == MAX_STYLE_MATCHES);
   return result;
 }
 
@@ -1616,6 +1634,18 @@ bool CssParser::saveToCache(const bool complete) const {
     return false;
   }
 
+  // Preserve source order on reload; the bounded index can exceed the task's stack budget.
+  auto sourceOrder = entryCount_ > 0 ? makeUniqueNoThrow<uint16_t[]>(entryCount_) : nullptr;
+  if (entryCount_ > 0 && !sourceOrder) {
+    LOG_ERR("CSS", "OOM sorting CSS cache rules");
+    return false;
+  }
+  if (entryCount_ > 0) {
+    for (uint16_t i = 0; i < entryCount_; ++i) sourceOrder[i] = i;
+    std::sort(sourceOrder.get(), sourceOrder.get() + entryCount_,
+              [this](const uint16_t a, const uint16_t b) { return entries_[a].offset < entries_[b].offset; });
+  }
+
   const std::string finalPath = cachePath + rulesCache;
   const std::string tmpPath = cachePath + rulesCacheTmp;
   const std::string backupPath = cachePath + rulesCacheBackup;
@@ -1647,14 +1677,15 @@ bool CssParser::saveToCache(const bool complete) const {
 
   // Write each rule: selector string + CssStyle fields
   for (uint16_t i = 0; i < entryCount_; ++i) {
-    const std::string_view selector = selectorAt(i);
+    const uint16_t entryIndex = sourceOrder[i];
+    const std::string_view selector = selectorAt(entryIndex);
     // Write selector string (length-prefixed)
     const auto selectorLen = static_cast<uint16_t>(selector.size());
     writeBytes(&selectorLen, sizeof(selectorLen));
     writeBytes(selector.data(), selectorLen);
 
     uint8_t styleWire[STYLE_WIRE_BYTES];
-    encodeStyleWire(stylePool_[entries_[i].styleIndex], styleWire);
+    encodeStyleWire(stylePool_[entries_[entryIndex].styleIndex], styleWire);
     writeBytes(styleWire, sizeof(styleWire));
     if (!writeOk) break;
   }

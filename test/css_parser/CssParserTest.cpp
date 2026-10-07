@@ -65,7 +65,7 @@ class CssParserTest : public ::testing::Test {
   fs::path directory_;
 };
 
-TEST_F(CssParserTest, ResolvesCaseInsensitiveCascadeAndMergesDuplicates) {
+TEST_F(CssParserTest, ResolvesCaseInsensitiveCascadeAndRepeatedSelectors) {
   CssParser parser(cachePath());
   ASSERT_EQ(loadCss(parser,
                     "P { text-align: center; }\n"
@@ -74,7 +74,7 @@ TEST_F(CssParserTest, ResolvesCaseInsensitiveCascadeAndMergesDuplicates) {
                     ".note { margin-top: 2em; }\n"),
             CssParser::ParseResult::Complete);
 
-  EXPECT_EQ(parser.ruleCount(), 3u);
+  EXPECT_EQ(parser.ruleCount(), 4u);
   const CssStyle style = parser.resolveStyle("p", "NOTE");
   EXPECT_EQ(style.textAlign, CssTextAlign::Justify);
   EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
@@ -352,6 +352,52 @@ TEST_F(CssParserTest, AppliesRulesInSpecificityOrder) {
   EXPECT_EQ(parser.resolveStyle("p", "", "", ancestors, 1).textAlign, CssTextAlign::Left);
   EXPECT_EQ(parser.resolveStyle("p", "c", "", ancestors, 1).textAlign, CssTextAlign::Center);
   EXPECT_EQ(parser.resolveStyle("p", "c", "x", ancestors, 1).textAlign, CssTextAlign::Right);
+}
+
+TEST_F(CssParserTest, EqualSpecificityUsesSourceOrderAcrossStylesheetsAndCache) {
+  CssParser writer(cachePath());
+  ASSERT_EQ(loadCss(writer, ".z { font-weight: bold; } .a { font-weight: normal; }"), CssParser::ParseResult::Complete);
+  for (const char* classes : {"z a", "a z"}) {
+    EXPECT_EQ(writer.resolveStyle("p", classes).fontWeight, CssFontWeight::Normal);
+  }
+  // A later rule for .z must not move its earlier font-weight declaration past .a.
+  ASSERT_EQ(loadCss(writer, ".z { font-style: italic; } div p { text-align: right; } body p { text-align: left; }"),
+            CssParser::ParseResult::Complete);
+  ASSERT_TRUE(writer.saveToCache(true));
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  const CssAncestor ancestors[] = {CssParser::makeAncestor("body", "", ""), CssParser::makeAncestor("div", "", "")};
+  for (const CssParser* parser : {&writer, &reader}) {
+    for (const char* classes : {"z a", "a z"}) {
+      const auto style = parser->resolveStyle("p", classes, "", ancestors, 2);
+      EXPECT_EQ(style.fontWeight, CssFontWeight::Normal);
+      EXPECT_EQ(style.fontStyle, CssFontStyle::Italic);
+      EXPECT_EQ(style.textAlign, CssTextAlign::Left);
+    }
+  }
+  ASSERT_EQ(loadCss(reader, ".z { font-weight: bold; }"), CssParser::ParseResult::Complete);
+  for (const char* classes : {"z a", "a z"}) {
+    EXPECT_EQ(reader.resolveStyle("p", classes).fontWeight, CssFontWeight::Bold);
+  }
+}
+
+TEST_F(CssParserTest, RepeatedRulesBeyondOneMatchBatchKeepEarlierProperties) {
+  CssParser writer(cachePath());
+  std::string css = ".z { font-style: italic; }";
+  for (int i = 0; i < 20; ++i) {
+    css += ".z { font-weight: bold; } .a { font-weight: normal; }";
+  }
+  ASSERT_EQ(loadCss(writer, css), CssParser::ParseResult::Complete);
+  ASSERT_TRUE(writer.saveToCache(true));
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  for (const CssParser* parser : {&writer, &reader}) {
+    for (const char* classes : {"z a", "a z"}) {
+      const auto style = parser->resolveStyle("p", classes);
+      EXPECT_EQ(style.fontWeight, CssFontWeight::Normal);
+      EXPECT_EQ(style.fontStyle, CssFontStyle::Italic);
+    }
+  }
 }
 
 TEST_F(CssParserTest, CacheRoundTripsContextualAndFontSizeRules) {
