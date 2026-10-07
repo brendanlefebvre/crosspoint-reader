@@ -584,8 +584,9 @@ Rect ClipSelectionActivity::handleRect(const int index, const bool start) const 
   const WordBox& word = words[index];
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const int size = std::max(24, UITheme::getInstance().getMetrics().verticalSpacing * 2);
-  const int edge = start ? word.x : word.x + word.width;
-  return Rect{std::clamp(edge - (start ? size : 0), safe.x, safe.x + safe.width - size),
+  const bool left = start != word.isRtl;
+  const int edge = left ? word.x : word.x + word.width;
+  return Rect{std::clamp(edge - (left ? size : 0), safe.x, safe.x + safe.width - size),
               std::clamp(word.y + textOffset() + word.height, safe.y, safe.y + safe.height - size), size, size};
 }
 
@@ -801,8 +802,10 @@ void ClipSelectionActivity::drawSelection() const {
     previous = &word;
   }
   if (rangeStart >= 0 && mappedInput.hasTouch()) {
-    if (words[first].pageOffset == currentPageOffset) GUI.drawSelectionHandle(renderer, handleRect(first, true), true);
-    if (words[last].pageOffset == currentPageOffset) GUI.drawSelectionHandle(renderer, handleRect(last, false), false);
+    if (words[first].pageOffset == currentPageOffset)
+      GUI.drawSelectionHandle(renderer, handleRect(first, true), !words[first].isRtl);
+    if (words[last].pageOffset == currentPageOffset)
+      GUI.drawSelectionHandle(renderer, handleRect(last, false), words[last].isRtl);
     if (!touchDragSelecting) GUI.drawSelectionActions(renderer, actionRect());
   } else {
     const WordBox& cursor = words[selected];

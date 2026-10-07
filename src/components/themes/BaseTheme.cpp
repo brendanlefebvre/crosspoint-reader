@@ -951,10 +951,10 @@ void BaseTheme::drawTextField(const GfxRenderer& renderer, Rect rect, const int 
   }
 }
 
-void BaseTheme::drawSelectionHandle(const GfxRenderer& renderer, const Rect rect, const bool start) {
+void BaseTheme::drawSelectionHandle(const GfxRenderer& renderer, const Rect rect, const bool left) {
   const int radius = rect.width / 2;
   renderer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, radius, Color::Black);
-  renderer.fillRect(start ? rect.x + radius : rect.x, rect.y, radius, radius);
+  renderer.fillRect(left ? rect.x + radius : rect.x, rect.y, radius, radius);
 }
 
 void BaseTheme::drawSelectionActions(const GfxRenderer& renderer, const Rect rect) {
