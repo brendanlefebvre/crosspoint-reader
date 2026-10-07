@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Epub/blocks/TextBlock.h>
 #include <HalStorage.h>  // HalFile (kept open for streamed TTFs)
 #include <SdCardFontManager.h>
 #include <SdCardFontRegistry.h>
@@ -106,7 +107,7 @@ class SdCardFontSystem {
     int fontId;
     uint32_t lastUse;
   };
-  static constexpr size_t MAX_CPFONT_VARIANTS = 4;
+  static constexpr size_t MAX_CPFONT_VARIANTS = TextBlock::MAX_WORD_FONTS + 2;  // Inline, block, and drop-cap fonts.
   std::vector<CpfontVariant> cpfontVariants_;
   uint32_t variantClock_ = 0;
   GfxRenderer* renderer_ = nullptr;
@@ -146,7 +147,7 @@ class SdCardFontSystem {
     uint32_t lastUse;
     std::unique_ptr<TtfEpdFont> font;
   };
-  static constexpr size_t MAX_TTF_VARIANTS = 4;
+  static constexpr size_t MAX_TTF_VARIANTS = TextBlock::MAX_WORD_FONTS + 2;
   std::vector<TtfVariant> ttfVariants_;
   bool loadTtfVariant(uint8_t pointSize, int fontId);
   void clearTtfVariants(GfxRenderer& renderer);

@@ -74,6 +74,9 @@ void SdCardFontSystem::begin(GfxRenderer& renderer) {
   registry_.discover();
   renderer_ = &renderer;
   cpfontVariants_.reserve(MAX_CPFONT_VARIANTS);
+#if CROSSPOINT_VECTOR_FONTS
+  ttfVariants_.reserve(MAX_TTF_VARIANTS);
+#endif
   FontVariantProvider provider;
   provider.ctx = this;
   provider.resolve = [](void* ctx, const int fontId, const float scale) {

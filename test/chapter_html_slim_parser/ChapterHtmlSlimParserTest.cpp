@@ -604,6 +604,7 @@ TEST_F(ChapterTableBorderTest, UnborderedTableKeepsRowRule) {
 }
 
 TEST_F(ChapterTableBorderTest, RichCellsPreserveParagraphStylesAndFollowingFlow) {
+  parser.paragraphAlignment = static_cast<uint8_t>(CssTextAlign::None);  // Book's Style honors CSS alignment.
   const size_t initialDepth = parser.blockStyleStack.size();
   open("table", nullptr);
   open("tr", nullptr);
