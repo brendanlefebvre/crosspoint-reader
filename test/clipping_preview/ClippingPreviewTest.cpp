@@ -281,21 +281,21 @@ TEST(ClippingText, SharedPredicatesHandleEmptyWhitespaceAndUnicode) {
 
 TEST(ClippingText, PreservesLiteralHyphensAndJoinsLayoutSplits) {
   std::string text;
-  ASSERT_TRUE(clippingText::append(text, "well-", 0, 5, 0, 4096));
-  ASSERT_TRUE(clippingText::append(text, "known", 5, 10, 0, 4096));
+  ASSERT_TRUE(clippingText::append(text, "well-", 0, 4096));
+  ASSERT_TRUE(clippingText::append(text, "known", 0, 4096));
   EXPECT_EQ(text, "well-known");
   text.clear();
-  ASSERT_TRUE(clippingText::append(text, "discre-", 0, 6, 0, 4096));
-  ASSERT_TRUE(clippingText::append(text, "tionary", 6, 13, 0, 4096));
+  ASSERT_TRUE(clippingText::append(text, "discre-", 0, 4096, true));
+  ASSERT_TRUE(clippingText::append(text, "tionary", 0, 4096));
   EXPECT_EQ(text, "discretionary");
   text.clear();
-  ASSERT_TRUE(clippingText::append(text, "가나", 0, 2, 0, 4096));
-  ASSERT_TRUE(clippingText::append(text, "다라", 2, 4, 0, 4096));
+  ASSERT_TRUE(clippingText::append(text, "가나", 0, 4096));
+  ASSERT_TRUE(clippingText::append(text, "다라", 0, 4096));
   EXPECT_EQ(text, "가나다라");
-  ASSERT_TRUE(clippingText::append(text, "<tag>", 5, 10, ' ', 4096));
+  ASSERT_TRUE(clippingText::append(text, "<tag>", ' ', 4096));
   EXPECT_EQ(text, "가나다라 <tag>");
   const auto before = text;
-  EXPECT_FALSE(clippingText::append(text, "too long", 11, 19, ' ', text.size() + 1));
+  EXPECT_FALSE(clippingText::append(text, "too long", ' ', text.size() + 1));
   EXPECT_EQ(text, before);
 }
 

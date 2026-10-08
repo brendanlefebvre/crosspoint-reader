@@ -41,6 +41,7 @@ class ClipSelectionActivity final : public Activity {
     EpdFontFamily::Style style = EpdFontFamily::REGULAR;
     bool paragraphStart = false;
     bool isRtl = false;
+    bool discretionaryHyphen = false;
   };
 
   static constexpr size_t MAX_SELECTABLE_WORDS = 240;

@@ -138,6 +138,7 @@ bool ClipSelectionActivity::extractWords() {
         word.style = style;
         word.paragraphStart = clippingText::hasEmSpacePrefix(text);
         word.isRtl = isRtl;
+        word.discretionaryHyphen = block->wordHasDiscretionaryHyphen(i);
         if (pageText) {
           for (const char* p = text; *p != '\0' && pageTextLength + 1 < FONT_PREWARM_TEXT_MAX; ++p) {
             pageText[pageTextLength++] = *p;
@@ -326,7 +327,7 @@ bool ClipSelectionActivity::buildSelectedText(const int first, const int last, s
                                          : current.row != previous.row || current.x > previous.x + previous.width + 2;
       if (separated) separator = current.paragraphStart ? '\n' : ' ';
     }
-    if (!clippingText::append(text, word, current.startOffset, current.endOffset, separator, CLIPPING_TEXT_MAX)) {
+    if (!clippingText::append(text, word, separator, CLIPPING_TEXT_MAX, current.discretionaryHyphen)) {
       return false;
     }
   }

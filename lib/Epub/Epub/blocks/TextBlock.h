@@ -41,6 +41,8 @@
 // focus reading is disabled).
 class TextBlock final : public Block {
  public:
+  // The unused high bit of the cached style byte carries clipping metadata.
+  static constexpr uint8_t DISCRETIONARY_HYPHEN_FLAG = 0x80;
   struct SourceRange {
     uint32_t start = UINT32_MAX;
     uint32_t end = UINT32_MAX;
@@ -106,7 +108,10 @@ class TextBlock final : public Block {
   }
   SourceRange wordSourceRange(const uint16_t i) const { return sourceRanges[i]; }
   int16_t wordXpos(const uint16_t i) const { return xposArr[i]; }
-  EpdFontFamily::Style wordStyle(const uint16_t i) const { return static_cast<EpdFontFamily::Style>(stylesArr[i]); }
+  EpdFontFamily::Style wordStyle(const uint16_t i) const {
+    return static_cast<EpdFontFamily::Style>(stylesArr[i] & ~DISCRETIONARY_HYPHEN_FLAG);
+  }
+  bool wordHasDiscretionaryHyphen(const uint16_t i) const { return (stylesArr[i] & DISCRETIONARY_HYPHEN_FLAG) != 0; }
   uint8_t focusBoundary(const uint16_t i) const { return focusPresent ? focusBoundaryArr[i] : 0; }
   uint16_t focusSuffixX(const uint16_t i) const { return focusPresent ? focusSuffixXArr[i] : 0; }
   bool hasRuby() const;

@@ -90,6 +90,14 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 54
+
+The serialized layout is unchanged. Word source ranges and split offsets now
+include codepoints absorbed by NFC composition. The high bit of each word's
+style byte marks a discretionary hyphen, so clipping can remove it independently
+of source length. Rebuild completed and partial section caches to correct
+clipping spaces and anchors for decomposed text.
+
 ### Version 53
 
 Each TextBlock arena starts with one 8-byte source range per word (two uint32

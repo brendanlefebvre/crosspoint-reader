@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "src/activities/settings/TextSettingsPreview.h"
+#include "src/clippings/ClippingText.h"
 #include "src/util/ParagraphIndentMigration.h"
 
 #define class struct
@@ -408,6 +409,38 @@ TEST_F(ChapterHtmlSlimParserTest, ParserAppliesTextSpacingToParagraphs) {
     EXPECT_EQ(block.wordXpos(3) - block.wordXpos(2), 14);  // glyph plus 150% of a 4 px space
   }
   EXPECT_EQ(lines, 1u);
+}
+
+TEST_F(ChapterHtmlSlimParserTest, NfdWordAcrossInlineStyleKeepsSourceRange) {
+  parser.beginParse();
+  ChapterHtmlSlimParser::startElement(&parser, "body", nullptr);
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  const std::string prefix = "Cafe\xCC\x81";
+  ChapterHtmlSlimParser::characterData(&parser, prefix.c_str(), static_cast<int>(prefix.size()));
+  ChapterHtmlSlimParser::startElement(&parser, "b", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, "s", 1);
+  ChapterHtmlSlimParser::endElement(&parser, "b");
+  ChapterHtmlSlimParser::endElement(&parser, "p");
+  parser.makePages();
+  ASSERT_NE(parser.currentPage, nullptr);
+  std::string selected;
+  uint32_t previousEnd = 0;
+  unsigned words = 0;
+  for (const auto& element : parser.currentPage->elements) {
+    if (element->getTag() != TAG_PageLine) continue;
+    const auto& block = *static_cast<const PageLine&>(*element).getBlock();
+    for (uint16_t i = 0; i < block.wordCount(); ++i) {
+      const auto range = block.wordSourceRange(i);
+      EXPECT_EQ(range.start, words == 0 ? 0u : 5u);
+      EXPECT_EQ(range.end, words == 0 ? 5u : 6u);
+      ASSERT_TRUE(clippingText::append(selected, block.wordText(i), range.start > previousEnd ? ' ' : '\0', 4096,
+                                       block.wordHasDiscretionaryHyphen(i)));
+      previousEnd = range.end;
+      ++words;
+    }
+  }
+  EXPECT_EQ(words, 2u);
+  EXPECT_EQ(selected, "Caf\xC3\xA9s");
 }
 
 TEST(KoreanLayout, HangulWordsStayWholeAndWrapAtSpaces) {
