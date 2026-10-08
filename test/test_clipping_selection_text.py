@@ -6,6 +6,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / "src/activities/reader/ClipSelectionActivity.cpp").read_text()
+reader_source = (ROOT / "src/activities/reader/EpubReaderActivity.cpp").read_text()
 header = (ROOT / "src/activities/reader/ClipSelectionActivity.h").read_text()
 word_box = "struct WordBox {" + header.split("struct WordBox {", 1)[1].split("  };", 1)[0] + "};"
 clean_word = "const char* cleanWordStart" + source.split("const char* cleanWordStart", 1)[1].split(
@@ -15,15 +16,18 @@ build_text = "bool ClipSelectionActivity::buildSelectedText" + source.split(
     "bool ClipSelectionActivity::buildSelectedText", 1
 )[1].split("void ClipSelectionActivity::confirmSelection", 1)[0]
 
-def method(name, next_name):
-    signature = source.index(name)
-    start = source.rfind("\n", 0, signature) + 1
-    return source[start:source.index(next_name, signature)].rstrip()
+def method(name, next_name, text=source):
+    signature = text.index(name)
+    start = text.rfind("\n", 0, signature) + 1
+    return text[start:text.index(next_name, signature)].rstrip()
 
 extract_words = method("bool ClipSelectionActivity::extractWords", "int ClipSelectionActivity::closestInRow")
 clean_draw = method("void ClipSelectionActivity::drawWordClean", "void ClipSelectionActivity::drawWordHighlight")
 highlight_draw = method("void ClipSelectionActivity::drawWordHighlight", "bool ClipSelectionActivity::renderIncremental")
 selection_draw = method("void ClipSelectionActivity::drawSelection", "void ClipSelectionActivity::render(")
+word_rect = method("Rect clippingWordRect", "int clampPercent", reader_source)
+saved_hit = method("int EpubReaderActivity::clippingAtPoint", "void EpubReaderActivity::drawClippingHighlights", reader_source)
+saved_draw = method("void EpubReaderActivity::drawClippingHighlights", "void EpubReaderActivity::renderStatusBar", reader_source)
 
 # Compile production extraction, export, and redraws with bounded UI/rendering stubs.
 harness = r"""
@@ -39,17 +43,20 @@ harness = r"""
 #include <Utf8.h>
 #include <Logging.h>
 #undef LOG_DBG
-#define LOG_DBG(...) do {} while (false)
+#define LOG_DBG(module, ...) (void)std::snprintf(nullptr, 0, __VA_ARGS__)
 #include "clippings/ClippingText.h"
+#include "ClippingStore.h"
+#include <Epub/ReaderRenderSpec.h>
 namespace BidiUtils { enum class BidiBaseDir : int8_t { AUTO = -1, LTR = 0, RTL = 1 }; }
 struct EpdFontFamily { enum Style { REGULAR, UNDERLINE = 4 }; };
 constexpr size_t FONT_PREWARM_TEXT_MAX = 2048;
 constexpr int TAG_PageLine = 1;
-struct Rect {};
+struct Rect { int x = 0, y = 0, width = 0, height = 0; };
 enum class Color { LightGray };
 struct Block {
   struct Style { bool isRtl = false; int8_t characterSpacing = 0; } style;
   struct Range { uint32_t start = 0, end = 3; } range;
+  using SourceRange = Range;
   const char* text = "one";
   bool paragraphStart = true;
   bool prefixSpace = false;
@@ -74,11 +81,17 @@ struct PageLine {
 };
 struct Page { std::vector<std::unique_ptr<PageLine>> elements; };
 struct Renderer {
+  enum RenderMode { BW };
   struct Draw { int x, width, tracking; };
   mutable std::vector<Draw> draws;
   mutable std::vector<Draw> fills;
   bool isSdCardFont(int) const { return false; }
   int getFontAscenderSize(int) const { return 12; }
+  int getLineHeight(int) const { return 16; }
+  RenderMode getRenderMode() const { return BW; }
+  void getOrientedViewableTRBL(int* top, int* right, int* bottom, int* left) const {
+    *top = *right = *bottom = *left = 0;
+  }
   int getTextAdvanceX(int, const char* text, EpdFontFamily::Style, int8_t tracking = 0) const {
     const int length = std::char_traits<char>::length(text);
     return length * 8 + (length - 1) * tracking;
@@ -91,13 +104,35 @@ struct Renderer {
   void fillRect(int x, int, int width, int, bool) const { fills.push_back({x, width, 0}); }
   void fillRectDither(int x, int, int width, int, Color) const { fills.push_back({x, width, 0}); }
   void drawRect(int, int, int, int, bool) const {}
+  void drawPixel(int, int, bool) const {}
 };
 struct Theme {
   void drawSelectionHandle(const Renderer&, Rect, bool) const {}
   void drawSelectionActions(const Renderer&, Rect) const {}
 } GUI;
 struct Input { bool hasTouch() const { return false; } };
-constexpr size_t CLIPPING_TEXT_MAX = 4096;
+using GfxRenderer = Renderer;
+using TextBlock = Block;
+struct BoardConfig { static bool isEegoA4() { return false; } };
+unsigned long millis() { return 0; }
+struct Settings {
+  int screenMargin = 0;
+  int getReaderFontId() const { return 0; }
+  ReaderRenderSpec readerRenderSpec(int width, int height) const {
+    ReaderRenderSpec spec;
+    spec.viewportWidth = width;
+    spec.viewportHeight = height;
+    return spec;
+  }
+} SETTINGS;
+struct SavedClippings {
+  Clipping clipping;
+  bool hasClippings() const { return true; }
+  size_t clippingCount() const { return 1; }
+  const Clipping* clippingAt(size_t) const { return &clipping; }
+} savedClippings;
+#undef CLIPPINGS
+#define CLIPPINGS savedClippings
 """ + clean_word + r"""
 struct ClipSelectionActivity {
 """ + word_box + r"""
@@ -125,6 +160,16 @@ struct ClipSelectionActivity {
   Rect actionRect() const { return {}; }
 };
 """ + build_text + extract_words + clean_draw + highlight_draw + selection_draw + r"""
+struct EpubReaderActivity {
+  Renderer& renderer;
+  explicit EpubReaderActivity(Renderer& renderer) : renderer(renderer) {}
+  struct Section { int currentPage = 0, pageCount = 1; } sectionData;
+  Section* section = &sectionData;
+  int currentSpineIndex = 0, buildViewportWidth = 480, buildViewportHeight = 800;
+  int clippingAtPoint(const Page&, int, int) const;
+  void drawClippingHighlights(const Page&, int, int, int) const;
+};
+""" + word_rect + saved_hit + saved_draw + r"""
 int loadLine(ClipSelectionActivity& activity, const std::vector<std::string>& logical,
              bool rtl, int first = 0, uint32_t offset = 0, uint16_t row = 0) {
   std::vector<uint16_t> visual;
@@ -205,6 +250,16 @@ int main() {
       assert(activity.words[i].characterSpacing == tracking);
       assert(activity.words[i].width == 24 + 2 * tracking);
     }
+    EpubReaderActivity reader{activity.renderer};
+    savedClippings.clipping.startOffset = 0;
+    savedClippings.clipping.endOffset = 3;
+    activity.renderer.fills.clear();
+    reader.drawClippingHighlights(*activity.pages[0], 0, 0, 0);
+    assert(activity.renderer.fills.size() == 1);
+    const int width = activity.words[0].width;
+    assert(activity.renderer.fills[0].width == width);
+    assert(reader.clippingAtPoint(*activity.pages[0], width - 1, 8) == 0);
+    assert(reader.clippingAtPoint(*activity.pages[0], width, 8) == -1);
   }
   for (const auto& logical : {std::vector<std::string>{"אחד", "alpha", "beta", "שני"},
                               std::vector<std::string>{"واحد", "alpha", "beta", "اثنان"}}) {
@@ -281,6 +336,7 @@ with tempfile.TemporaryDirectory() as directory:
         "-I", str(ROOT / "src"), "-I", str(ROOT / "lib/Memory"),
         "-I", str(ROOT / "test/minibidi_arabic/stubs"),
         "-I", str(ROOT / "lib/MiniBidi"), "-I", str(ROOT / "lib/Utf8"),
+        "-I", str(ROOT / "lib/Epub"),
         str(cpp), str(bidi_object), str(ROOT / "lib/MiniBidi/BidiUtils.cpp"),
         str(ROOT / "lib/Utf8/Utf8.cpp"), "-o", str(executable),
     ], check=True)
