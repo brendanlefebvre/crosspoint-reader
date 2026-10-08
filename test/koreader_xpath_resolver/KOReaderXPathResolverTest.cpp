@@ -24,6 +24,20 @@ constexpr char kCommentBoundaryFixture[] = R"(<html><body><p>before<!--comment--
 constexpr char kProcessingInstructionBoundaryFixture[] = R"(<html><body><p>before<?marker?>after</p></body></html>)";
 constexpr char kCdataBoundaryFixture[] = R"(<html><body><p>before<![CDATA[middle]]>after</p></body></html>)";
 constexpr char kHiddenCdataFixture[] = R"(<html><body><p>before<rp><![CDATA[hidden]]></rp>after</p></body></html>)";
+
+// Kindle/MOBI-derived EPUBs (Calibre output) carry body text in <div>/<span>, not <p>.
+// Visible offsets below follow the layout parser: every body codepoint counts, including
+// formatting whitespace between blocks.
+//   0 "\n"   1 "\n"   2 "3"   3 " "   4 "\n"   5-13 "She drove"   14-26 " back to D.C."
+//   27 "\n"  28-33 "\u201cWho?\u201d"   34 "\n"
+constexpr char kKindleDivSpanFixture[] =
+    "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body class=\"calibre\">\n"
+    "<p id=\"filepos1\" class=\"calibre1\"></p>\n"
+    "<div class=\"calibre8\"><span class=\"calibre9\">3</span></div><div class=\"calibre10\"> </div>\n"
+    "<div class=\"calibre12\"><span class=\"calibre6\"><span class=\"bold\">She drove</span> back to "
+    "D.C.</span></div>\n"
+    "<div class=\"calibre19\"><span class=\"calibre6\">\xE2\x80\x9CWho?\xE2\x80\x9D</span></div>\n"
+    "</body></html>";
 }  // namespace
 
 TEST(KOReaderXPathResolver, ResolvesExactOffsetWithFullAncestry) {
@@ -129,9 +143,6 @@ TEST(KOReaderXPathResolver, CountsVisibleCdataAndIgnoresHiddenCdata) {
 TEST(KOReaderXPathResolver, ReturnsEmptyForUnusableContent) {
   EXPECT_TRUE(ChapterXPathResolver::findXPathForVisibleTextOffset(epubWith(""), 0, 0).empty());
   EXPECT_TRUE(ChapterXPathResolver::findXPathForVisibleTextOffset(epubWith("<html><body><p>broken"), 0, 100).empty());
-  EXPECT_TRUE(ChapterXPathResolver::findXPathForVisibleTextOffset(
-                  epubWith("<html><body><div>not a paragraph or list item</div></body></html>"), 0, 0)
-                  .empty());
 }
 
 TEST(KOReaderXPathResolver, KeepsParagraphOnlyResolutionUnchanged) {
@@ -139,4 +150,69 @@ TEST(KOReaderXPathResolver, KeepsParagraphOnlyResolutionUnchanged) {
 
   EXPECT_EQ(ChapterXPathResolver::findXPathForParagraph(epub, 0, 2),
             "/body/DocFragment[1]/body/div[1]/section[1]/p[2]");
+}
+
+TEST(KOReaderXPathResolver, ResolvesTextOutsideParagraphElements) {
+  const auto epub = epubWith(kKindleDivSpanFixture);
+
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 2),
+            "/body/DocFragment[1]/body/div[1]/span[1]/text()[1].0");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 5),
+            "/body/DocFragment[1]/body/div[3]/span[1]/span[1]/text()[1].0");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 20),
+            "/body/DocFragment[1]/body/div[3]/span[1]/text()[1].6");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 28),
+            "/body/DocFragment[1]/body/div[4]/span[1]/text()[1].0");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(
+                epubWith("<html><body><div>not a paragraph or list item</div></body></html>"), 0, 0),
+            "/body/DocFragment[1]/body/div[1]/text()[1].0");
+}
+
+TEST(KOReaderXPathResolver, ResolvesProgressOutsideParagraphElements) {
+  const auto epub = epubWith(kKindleDivSpanFixture);
+
+  // Progress spans the text up to the last non-whitespace codepoint (34), so 1.0 lands at the
+  // end of the final text node rather than in the trailing formatting newline.
+  EXPECT_EQ(ChapterXPathResolver::findXPathForProgress(epub, 0, 1.0f),
+            "/body/DocFragment[1]/body/div[4]/span[1]/text()[1].6");
+  // ceil(0.5 * 34) = 17 -> " back to D.C." starts at 14 -> offset 3 within the node.
+  EXPECT_EQ(ChapterXPathResolver::findXPathForProgress(epub, 0, 0.5f),
+            "/body/DocFragment[1]/body/div[3]/span[1]/text()[1].3");
+}
+
+TEST(KOReaderXPathResolver, SkipsWhitespaceOnlyTextWhenResolvingOffsets) {
+  const auto epub = epubWith(kKindleDivSpanFixture);
+
+  // Formatting whitespace between blocks is never a usable anchor: resolve to the next text.
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 1),
+            "/body/DocFragment[1]/body/div[1]/span[1]/text()[1].0");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 3),
+            "/body/DocFragment[1]/body/div[3]/span[1]/span[1]/text()[1].0");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 4),
+            "/body/DocFragment[1]/body/div[3]/span[1]/span[1]/text()[1].0");
+  // Trailing whitespace with no text after it cannot be resolved.
+  EXPECT_TRUE(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 34).empty());
+}
+
+TEST(KOReaderXPathResolver, MatchesCrengineTextNodeIndexingAroundWhitespace) {
+  // crengine drops a whitespace-only text run when it is the first child of a block element,
+  // so " rest" is text()[1] here, not text()[2].
+  const auto blockLeading = epubWith("<html><body><div>\n<b>bold</b> rest</div></body></html>");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(blockLeading, 0, 6),
+            "/body/DocFragment[1]/body/div[1]/text()[1].1");
+
+  // Inside an inline element the leading whitespace run is kept, so " rest" is text()[2].
+  const auto inlineLeading = epubWith("<html><body><p><span>\n<b>bold</b> rest</span></p></body></html>");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(inlineLeading, 0, 6),
+            "/body/DocFragment[1]/body/p[1]/span[1]/text()[2].1");
+
+  // Whitespace that is not the first child of a block is kept and counted.
+  const auto blockInterior = epubWith("<html><body><div><b>bold</b>\n<i>x</i> rest</div></body></html>");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(blockInterior, 0, 7),
+            "/body/DocFragment[1]/body/div[1]/text()[2].1");
+
+  // A run that starts with whitespace but continues with text is one kept node.
+  const auto mixedRun = epubWith("<html><body><div>\n  Text</div></body></html>");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(mixedRun, 0, 3),
+            "/body/DocFragment[1]/body/div[1]/text()[1].3");
 }
