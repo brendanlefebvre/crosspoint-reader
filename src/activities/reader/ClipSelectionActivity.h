@@ -34,6 +34,7 @@ class ClipSelectionActivity final : public Activity {
     int16_t height = 0;
     uint16_t row = 0;
     uint8_t pageOffset = 0;
+    int8_t characterSpacing = 0;
     uint16_t pageWordIndex = 0;
     uint32_t startOffset = UINT32_MAX;
     uint32_t endOffset = UINT32_MAX;

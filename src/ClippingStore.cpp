@@ -23,6 +23,17 @@ constexpr char CLIPPINGS_DIR[] = "/.crosspoint/clippings";
 constexpr size_t TEXT_COPY_BUFFER_SIZE = 128;
 constexpr size_t HEADER_STRING_MAX = CLIPPING_TEXT_MAX;
 
+bool truncateDeletionTail(HalFile& journal) {
+  const size_t size = journal.size();
+  const size_t tail = size % sizeof(Clipping::id);
+  if (tail == 0) return true;
+  if (!journal.truncate(size - tail)) {
+    LOG_ERR("CLIP", "Failed to recover clipping deletion journal");
+    return false;
+  }
+  return true;
+}
+
 std::string storeFilePathForBook(const std::string& filePath, const std::string& bookType) {
   return std::string(CLIPPINGS_DIR) + "/" + bookType + "_" + std::to_string(std::hash<std::string>{}(filePath)) +
          ".bin";
@@ -220,8 +231,14 @@ bool ClippingStore::removeClippingAt(const size_t index) {
   if (!loaded || index >= clippingSize) return false;
   if (clippingRef(index).id[0]) {
     HalFile journal = Storage.open((storeFilePath + ".deleted").c_str(), O_WRONLY | O_CREAT | O_APPEND);
-    if (!journal || journal.write(reinterpret_cast<const uint8_t*>(clippingRef(index).id),
-                                  sizeof(clippingRef(index).id)) != sizeof(clippingRef(index).id)) {
+    if (!journal || !truncateDeletionTail(journal)) {
+      LOG_ERR("CLIP", "Failed to open clipping deletion journal");
+      return false;
+    }
+    const size_t originalSize = journal.size();
+    if (journal.write(reinterpret_cast<const uint8_t*>(clippingRef(index).id), sizeof(clippingRef(index).id)) !=
+        sizeof(clippingRef(index).id)) {
+      if (!journal.truncate(originalSize)) LOG_ERR("CLIP", "Failed to roll back clipping deletion journal");
       LOG_ERR("CLIP", "Failed to queue clipping deletion");
       return false;
     }
@@ -337,9 +354,9 @@ bool ClippingStore::nextDeletion(uint32_t& offset, char (&id)[65]) const {
   id[0] = '\0';
   const std::string path = storeFilePath + ".deleted";
   if (!Storage.exists(path.c_str())) return true;
-  HalFile journal;
-  if (!Storage.openFileForRead("CLIP", path, journal)) return false;
-  if (journal.size() % sizeof(id) != 0 || !journal.seek(offset)) {
+  HalFile journal = Storage.open(path.c_str(), O_RDWR);
+  if (!journal || !truncateDeletionTail(journal)) return false;
+  if (offset % sizeof(id) != 0 || !journal.seek(offset)) {
     LOG_ERR("CLIP", "Invalid clipping deletion journal");
     return false;
   }

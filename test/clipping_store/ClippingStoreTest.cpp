@@ -136,6 +136,75 @@ TEST(ClippingStore, OffsetAllocationFailureDoesNotCreateTempFile) {
   EXPECT_EQ(add(store, "two"), Result::Added);
 }
 
+TEST(ClippingStore, ShortDeletionAppendRollsBackAndRetryCanSync) {
+  for (const bool failedRollback : {false, true}) {
+    fake::reset();
+    ClippingStore store;
+    ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+    ASSERT_EQ(add(store), Result::Added);
+    ASSERT_EQ(add(store, "two"), Result::Added);
+    ASSERT_TRUE(store.prepareSync());
+    const std::string firstId = store.clippingAt(0)->id;
+    const std::string secondId = store.clippingAt(1)->id;
+    ASSERT_TRUE(store.removeClippingAt(0));
+    const auto journalPath = storePath() + ".deleted";
+    const auto original = fake::files.at(journalPath)->bytes;
+    fake::shortWrite = 1;
+    if (failedRollback) fake::failTruncate = 0;
+    EXPECT_FALSE(store.removeClippingAt(0));
+    ASSERT_EQ(store.clippingCount(), 1u);
+    if (failedRollback) {
+      EXPECT_EQ(fake::files.at(journalPath)->bytes.size(), original.size() + 1);
+    } else {
+      EXPECT_EQ(fake::files.at(journalPath)->bytes, original);
+    }
+    ASSERT_TRUE(store.removeClippingAt(0));
+    store.unload();
+    ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+    uint32_t offset = 0;
+    char id[65];
+    ASSERT_TRUE(store.nextDeletion(offset, id));
+    EXPECT_EQ(id, firstId);
+    ASSERT_TRUE(store.nextDeletion(offset, id));
+    EXPECT_EQ(id, secondId);
+    ASSERT_TRUE(store.nextDeletion(offset, id));
+    EXPECT_EQ(id[0], '\0');
+    EXPECT_EQ(fake::files.at(journalPath)->bytes.size(), 130u);
+    EXPECT_TRUE(store.finishDeletions());
+  }
+}
+
+TEST(ClippingStore, InterruptedDeletionTailRecoversBeforeReading) {
+  fake::reset();
+  ClippingStore store;
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  ASSERT_EQ(add(store), Result::Added);
+  ASSERT_TRUE(store.prepareSync());
+  const std::string expectedId = store.clippingAt(0)->id;
+  ASSERT_TRUE(store.removeClippingAt(0));
+  const auto journalPath = storePath() + ".deleted";
+  const auto original = fake::files.at(journalPath)->bytes;
+  fake::files.at(journalPath)->bytes.push_back('x');
+  store.unload();
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  uint32_t offset = 0;
+  char id[65];
+  fake::failTruncate = 0;
+  EXPECT_FALSE(store.nextDeletion(offset, id));
+  EXPECT_EQ(offset, 0u);
+  ASSERT_TRUE(store.nextDeletion(offset, id));
+  EXPECT_EQ(id, expectedId);
+  EXPECT_EQ(fake::files.at(journalPath)->bytes, original);
+  ASSERT_TRUE(store.nextDeletion(offset, id));
+  EXPECT_EQ(id[0], '\0');
+  ASSERT_TRUE(store.finishDeletions());
+  fake::add(journalPath, "x");
+  offset = 0;
+  ASSERT_TRUE(store.nextDeletion(offset, id));
+  EXPECT_EQ(id[0], '\0');
+  EXPECT_TRUE(fake::files.at(journalPath)->bytes.empty());
+}
+
 TEST(ClippingStore, Utf8TitleAndFailedDeletionPreserveRecord) {
   fake::reset();
   ClippingStore store;

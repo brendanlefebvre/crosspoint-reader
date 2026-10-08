@@ -15,7 +15,17 @@ build_text = "bool ClipSelectionActivity::buildSelectedText" + source.split(
     "bool ClipSelectionActivity::buildSelectedText", 1
 )[1].split("void ClipSelectionActivity::confirmSelection", 1)[0]
 
-# Compile the production exporter and BiDi resolver, with only activity/UI dependencies omitted.
+def method(name, next_name):
+    signature = source.index(name)
+    start = source.rfind("\n", 0, signature) + 1
+    return source[start:source.index(next_name, signature)].rstrip()
+
+extract_words = method("bool ClipSelectionActivity::extractWords", "int ClipSelectionActivity::closestInRow")
+clean_draw = method("void ClipSelectionActivity::drawWordClean", "void ClipSelectionActivity::drawWordHighlight")
+highlight_draw = method("void ClipSelectionActivity::drawWordHighlight", "bool ClipSelectionActivity::renderIncremental")
+selection_draw = method("void ClipSelectionActivity::drawSelection", "void ClipSelectionActivity::render(")
+
+# Compile production extraction, export, and redraws with bounded UI/rendering stubs.
 harness = r"""
 #include <algorithm>
 #include <cassert>
@@ -28,16 +38,93 @@ harness = r"""
 #include <Memory.h>
 #include <Utf8.h>
 #include <Logging.h>
+#undef LOG_DBG
+#define LOG_DBG(...) do {} while (false)
 #include "clippings/ClippingText.h"
-struct EpdFontFamily { enum Style { REGULAR }; };
+namespace BidiUtils { enum class BidiBaseDir : int8_t { AUTO = -1, LTR = 0, RTL = 1 }; }
+struct EpdFontFamily { enum Style { REGULAR, UNDERLINE = 4 }; };
+constexpr size_t FONT_PREWARM_TEXT_MAX = 2048;
+constexpr int TAG_PageLine = 1;
+struct Rect {};
+enum class Color { LightGray };
+struct Block {
+  struct Style { bool isRtl = false; int8_t characterSpacing = 0; } style;
+  struct Range { uint32_t start = 0, end = 3; } range;
+  const char* text = "one";
+  bool paragraphStart = true;
+  bool prefixSpace = false;
+  bool valid() const { return true; }
+  const Style& getBlockStyle() const { return style; }
+  int getRubyShift(int) const { return 0; }
+  uint16_t wordCount() const { return prefixSpace ? 2 : 1; }
+  const char* wordText(uint16_t i) const { return prefixSpace && i == 0 ? " " : text; }
+  EpdFontFamily::Style wordStyle(uint16_t) const { return EpdFontFamily::REGULAR; }
+  int wordXpos(uint16_t) const { return 0; }
+  Range wordSourceRange(uint16_t i) const {
+    return prefixSpace && i == 0 ? Range{range.start, range.start + 1} : range;
+  }
+  bool wordStartsParagraph(uint16_t i) const { return paragraphStart && i == 0; }
+  bool wordHasDiscretionaryHyphen(uint16_t) const { return false; }
+};
+struct PageLine {
+  int xPos = 0, yPos = 0;
+  Block block;
+  int getTag() const { return TAG_PageLine; }
+  const Block* getBlock() const { return &block; }
+};
+struct Page { std::vector<std::unique_ptr<PageLine>> elements; };
+struct Renderer {
+  struct Draw { int x, width, tracking; };
+  mutable std::vector<Draw> draws;
+  mutable std::vector<Draw> fills;
+  bool isSdCardFont(int) const { return false; }
+  int getFontAscenderSize(int) const { return 12; }
+  int getTextAdvanceX(int, const char* text, EpdFontFamily::Style, int8_t tracking = 0) const {
+    const int length = std::char_traits<char>::length(text);
+    return length * 8 + (length - 1) * tracking;
+  }
+  void ensureSdCardFontReady(int, const char*, uint8_t) {}
+  void drawText(int font, int x, int, const char* text, bool, EpdFontFamily::Style style,
+                BidiUtils::BidiBaseDir = BidiUtils::BidiBaseDir::AUTO, int8_t tracking = 0) const {
+    draws.push_back({x, getTextAdvanceX(font, text, style, tracking), tracking});
+  }
+  void fillRect(int x, int, int width, int, bool) const { fills.push_back({x, width, 0}); }
+  void fillRectDither(int x, int, int width, int, Color) const { fills.push_back({x, width, 0}); }
+  void drawRect(int, int, int, int, bool) const {}
+};
+struct Theme {
+  void drawSelectionHandle(const Renderer&, Rect, bool) const {}
+  void drawSelectionActions(const Renderer&, Rect) const {}
+} GUI;
+struct Input { bool hasTouch() const { return false; } };
 constexpr size_t CLIPPING_TEXT_MAX = 4096;
 """ + clean_word + r"""
 struct ClipSelectionActivity {
 """ + word_box + r"""
   std::unique_ptr<WordBox[]> words = makeUniqueNoThrow<WordBox[]>(240);
+  static constexpr size_t MAX_SELECTABLE_WORDS = 240;
+  Renderer renderer;
+  Input mappedInput;
+  std::vector<std::unique_ptr<Page>> pages;
+  size_t wordCount = 0;
+  uint16_t rowCount = 0;
+  int fontId = 0, lineHeight = 16, marginLeft = 0, marginTop = 0;
+  int selected = 0, rangeStart = -1, currentPageOffset = 0;
+  bool touchDragSelecting = false;
   bool buildSelectedText(int first, int last, std::string& text) const;
+  bool extractWords();
+  void drawWordClean(int, int, int) const;
+  void drawWordHighlight(int, int, int, int, int) const;
+  void drawSelection() const;
+  void prewarmWord(int) const {}
+  void clearGapBetween(const WordBox&, const WordBox&, int, int) const {}
+  void ditherGapBetween(const WordBox&, const WordBox&, int, int) const {}
+  int textOffset() const { return 0; }
+  int textXOffset() const { return 0; }
+  Rect handleRect(int, bool) const { return {}; }
+  Rect actionRect() const { return {}; }
 };
-""" + build_text + r"""
+""" + build_text + extract_words + clean_draw + highlight_draw + selection_draw + r"""
 int loadLine(ClipSelectionActivity& activity, const std::vector<std::string>& logical,
              bool rtl, int first = 0, uint32_t offset = 0, uint16_t row = 0) {
   std::vector<uint16_t> visual;
@@ -53,6 +140,7 @@ int loadLine(ClipSelectionActivity& activity, const std::vector<std::string>& lo
   for (size_t i = 0; i < visual.size(); ++i) {
     const size_t index = visual[i];
     auto& word = activity.words[first + i];
+    word = {};
     word.text = logical[index].c_str();
     word.startOffset = starts[index];
     word.endOffset = index + 1 < starts.size() ? starts[index + 1] - 1 : offset - 1;
@@ -74,6 +162,50 @@ void expect(const ClipSelectionActivity& activity, int first, int last, const ch
 }
 int main() {
   ClipSelectionActivity activity;
+  for (const int8_t tracking : {2, -2}) {
+    auto page = std::make_unique<Page>();
+    for (int i = 0; i < 2; ++i) {
+      auto line = std::make_unique<PageLine>();
+      line->xPos = i * 80;
+      line->yPos = i * 16;
+      line->block.style.characterSpacing = tracking;
+      line->block.range = {uint32_t(i * 3), uint32_t((i + 1) * 3)};
+      line->block.text = i == 0 ? "one" : "two";
+      page->elements.push_back(std::move(line));
+    }
+    activity.pages.clear();
+    activity.pages.push_back(std::move(page));
+    assert(activity.extractWords());
+    assert(activity.wordCount == 2);
+    expect(activity, 0, 1, "one\ntwo");
+    activity.words[1].startOffset += 3;  // Whitespace-formatted XHTML has an offset gap.
+    expect(activity, 0, 1, "one\ntwo");
+    activity.pages[0]->elements[1]->block.prefixSpace = true;
+    assert(activity.extractWords());
+    assert(activity.wordCount == 2);
+    expect(activity, 0, 1, "one\ntwo");
+    activity.renderer.draws.clear();
+    activity.renderer.fills.clear();
+    activity.rangeStart = 0;
+    activity.selected = 1;
+    activity.drawSelection();
+    activity.drawWordClean(0, 0, 0);  // Cursor leaves the old word.
+    activity.drawWordHighlight(1, 1, 1, 0, 0);
+    assert(activity.renderer.draws.size() == 4);
+    assert(activity.renderer.fills.size() == 4);
+    for (size_t i = 0; i < 4; ++i) {
+      const auto& draw = activity.renderer.draws[i];
+      const auto& fill = activity.renderer.fills[i];
+      assert(draw.tracking == tracking);
+      assert(draw.width == 24 + 2 * tracking);
+      assert(fill.width == draw.width);
+      assert(fill.x == draw.x);
+    }
+    for (size_t i = 0; i < 2; ++i) {
+      assert(activity.words[i].characterSpacing == tracking);
+      assert(activity.words[i].width == 24 + 2 * tracking);
+    }
+  }
   for (const auto& logical : {std::vector<std::string>{"אחד", "alpha", "beta", "שני"},
                               std::vector<std::string>{"واحد", "alpha", "beta", "اثنان"}}) {
     loadLine(activity, logical, true);

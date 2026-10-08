@@ -58,7 +58,8 @@ class TextBlock final : public Block {
  private:
   BlockStyle blockStyle;
   uint16_t numWords = 0;
-  uint16_t textBytes = 0;  // total size of the text region, including NULs
+  uint16_t paragraphStartWord = UINT16_MAX;  // Visual index of the paragraph's first logical word.
+  uint16_t textBytes = 0;                    // total size of the text region, including NULs
   bool focusPresent = false;
   bool isValid = true;
   // The ONLY allocation: makeUniqueNoThrow, so OOM yields an invalid block
@@ -90,7 +91,7 @@ class TextBlock final : public Block {
                      const std::vector<EpdFontFamily::Style>& wordStyles, const std::vector<uint8_t>& focusBoundary,
                      const std::vector<uint16_t>& focusSuffixX, const BlockStyle& blockStyle = BlockStyle(),
                      std::vector<std::string> rubyTexts = {}, std::vector<LinkSpan> linkSpans = {},
-                     const std::vector<SourceRange>& ranges = {});
+                     const std::vector<SourceRange>& ranges = {}, uint16_t paragraphStartWord = UINT16_MAX);
   ~TextBlock() override = default;
   TextBlock(const TextBlock&) = delete;
   TextBlock& operator=(const TextBlock&) = delete;
@@ -107,6 +108,7 @@ class TextBlock final : public Block {
     return end - textOffArr[i] - 1;  // exclude the NUL
   }
   SourceRange wordSourceRange(const uint16_t i) const { return sourceRanges[i]; }
+  bool wordStartsParagraph(const uint16_t i) const { return i == paragraphStartWord; }
   int16_t wordXpos(const uint16_t i) const { return xposArr[i]; }
   EpdFontFamily::Style wordStyle(const uint16_t i) const {
     return static_cast<EpdFontFamily::Style>(stylesArr[i] & ~DISCRETIONARY_HYPHEN_FLAG);

@@ -90,6 +90,14 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 55
+
+Each TextBlock adds a uint16 `paragraphStartWord` after `textBytes`. It is the
+visual index of the paragraph's first logical word, or `UINT16_MAX` for a
+continuation line. Clipping uses this marker independently of source-offset
+gaps. Older completed and partial section caches rebuild automatically;
+book metadata and reading progress are kept.
+
 ### Version 54
 
 The serialized layout is unchanged. Word source ranges and split offsets now

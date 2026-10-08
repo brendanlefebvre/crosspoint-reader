@@ -1795,8 +1795,10 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   // Preserve source coordinates through visual reordering and discretionary hyphens.
   std::vector<TextBlock::SourceRange> sourceRanges;
   sourceRanges.reserve(lineWordCount);
+  uint16_t paragraphStartWord = UINT16_MAX;
   for (size_t i = 0; i < lineWordCount; ++i) {
     const size_t logical = lastBreakAt + (willReorder ? visualOrderScratch[i] : i);
+    if (!firstLineConsumed && logical == 0) paragraphStartWord = static_cast<uint16_t>(i);
     const uint32_t start = visibleOffsetAt(logical);
     const bool discretionaryHyphen = (wordStyles[logical] & TextBlock::DISCRETIONARY_HYPHEN_FLAG) != 0;
     uint32_t end = sourceOffsetAfter(start, countCodepoints(wordAt(logical)) - discretionaryHyphen);
@@ -1813,7 +1815,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     // TextBlock flattens the vectors into its arena; they stay owned here and die at return.
     auto block = makeUniqueNoThrow<TextBlock>(lineWords, lineXPos, lineWordStyles, std::vector<uint8_t>{},
                                               std::vector<uint16_t>{}, blockStyle, std::move(lineRubyTexts),
-                                              std::move(lineLinks), sourceRanges);
+                                              std::move(lineLinks), sourceRanges, paragraphStartWord);
     if (!block || !block->valid()) {
       LOG_ERR("PTX", "Dropping line: TextBlock or arena allocation failed");
       // Latch through the same flag as addWord() OOM: the caller releases the
@@ -1842,8 +1844,9 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
                                              boundary, blockStyle.characterSpacing));
   }
 
-  auto block = makeUniqueNoThrow<TextBlock>(lineWords, lineXPos, lineWordStyles, outBoundaries, outSuffixX, blockStyle,
-                                            std::move(lineRubyTexts), std::move(lineLinks), sourceRanges);
+  auto block =
+      makeUniqueNoThrow<TextBlock>(lineWords, lineXPos, lineWordStyles, outBoundaries, outSuffixX, blockStyle,
+                                   std::move(lineRubyTexts), std::move(lineLinks), sourceRanges, paragraphStartWord);
   if (!block || !block->valid()) {
     LOG_ERR("PTX", "Dropping line: TextBlock or arena allocation failed");
     droppedWords = true;  // see the non-focus branch above

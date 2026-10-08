@@ -21,6 +21,8 @@ struct Node {
 inline std::map<std::string, std::shared_ptr<Node>> files;
 inline int failRead = -1;
 inline int failWrite = -1;
+inline int shortWrite = -1;
+inline int failTruncate = -1;
 inline int failRename = -1;
 inline int failAlloc = -1;
 inline bool failDirectorySeek = false;
@@ -50,6 +52,8 @@ inline void reset() {
   files.clear();
   failRead = -1;
   failWrite = -1;
+  shortWrite = -1;
+  failTruncate = -1;
   failRename = -1;
   failAlloc = -1;
   failDirectorySeek = false;
@@ -155,7 +159,7 @@ class HalFile {
   size_t size() const { return fileSize(); }
   void flush() {}
   bool truncate(const size_t size) {
-    if (!node || size > node->bytes.size()) return false;
+    if (!node || fake::fail(fake::failTruncate) || size > node->bytes.size()) return false;
     node->bytes.resize(size);
     pos = std::min(pos, size);
     return true;
@@ -169,7 +173,7 @@ class HalFile {
     pos += size;
     return static_cast<int>(size);
   }
-  size_t write(const uint8_t* data, const size_t size) {
+  size_t write(const uint8_t* data, size_t size) {
     if (size == 0) return 0;
     fake::writesByPath[path]++;
     if (!fake::failWritePath.empty() && path == fake::failWritePath) {
@@ -178,6 +182,10 @@ class HalFile {
       return 0;
     }
     if (!node || fake::fail(fake::failWrite)) return 0;
+    if (fake::shortWrite >= 0) {
+      size = std::min(size, static_cast<size_t>(fake::shortWrite));
+      fake::shortWrite = -1;
+    }
     node->bytes.resize(std::max(node->bytes.size(), pos + size));
     std::memcpy(node->bytes.data() + pos, data, size);
     pos += size;
