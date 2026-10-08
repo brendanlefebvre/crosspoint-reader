@@ -642,7 +642,7 @@ CssParser::PoolResult CssParser::ensureEntryCapacity(const size_t needed) {
   if (needed <= entryCapacity_) return PoolResult::Ready;
   if (needed > MAX_RULES) return PoolResult::Limit;
 
-  size_t capacity = entryCapacity_ ? entryCapacity_ * 2u : 128u;
+  size_t capacity = entryCapacity_ ? entryCapacity_ * 2u : 32u;
   while (capacity < needed) capacity *= 2u;
   capacity = std::min(capacity, MAX_RULES);
   auto grown = makeUniqueNoThrow<SelectorEntry[]>(capacity);
@@ -660,7 +660,7 @@ CssParser::PoolResult CssParser::ensureSelectorPoolCapacity(const size_t needed)
   if (needed <= selectorPoolCapacity_) return PoolResult::Ready;
   if (needed > SELECTOR_POOL_CAP) return PoolResult::Limit;
 
-  size_t capacity = selectorPoolCapacity_ ? selectorPoolCapacity_ * 2u : 4096u;
+  size_t capacity = selectorPoolCapacity_ ? selectorPoolCapacity_ * 2u : 512u;
   while (capacity < needed) capacity *= 2u;
   capacity = std::min(capacity, SELECTOR_POOL_CAP);
   auto grown = makeUniqueNoThrow<char[]>(capacity);
