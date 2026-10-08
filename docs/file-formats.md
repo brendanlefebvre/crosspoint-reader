@@ -90,12 +90,20 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 51
+### Version 53
 
 Each TextBlock arena starts with one 8-byte source range per word (two uint32
 chapter-visible Unicode-codepoint offsets, start inclusive and end exclusive).
-Ranges follow words through BiDi ordering and line wrapping. Old section caches
-are rebuilt automatically; no book or progress file is removed.
+Ranges follow words through BiDi ordering and line wrapping. This version also
+includes the version 52 redaction layout changes. Older completed and partial
+section caches are rebuilt automatically; book and progress files are kept.
+
+### Version 52
+
+The serialized layout is unchanged. Missing full-block (`U+2588`) and black-square
+(`U+25A0`) symbols now use font-sized solid rectangles instead of replacement
+glyphs. Rebuild older sections so cached line breaks and word positions match
+their new widths.
 
 ### Version 50
 
