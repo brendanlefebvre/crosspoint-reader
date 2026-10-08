@@ -222,7 +222,12 @@ class ParagraphTextCounter final : public Print {
 
     visibleChars += countUtf8Codepoints(data, len);
     if (!isWhitespaceOnly(data, len)) {
-      lastTextEndChars = visibleChars;
+      // Trailing whitespace inside this run is single-byte, so bytes equal codepoints here.
+      int trailing = 0;
+      while (trailing < len && isWhitespaceOnly(data + len - 1 - trailing, 1)) {
+        trailing++;
+      }
+      lastTextEndChars = visibleChars - static_cast<size_t>(trailing);
     }
   }
 
@@ -477,6 +482,7 @@ class XPathProgressResolver final : public Print {
         bodyDepth = depth;
         parentStates.emplace_back();
         parentStates.back().isBlock = true;
+        textNodeIndexStack.push_back(0);
       }
       depth++;
       return;

@@ -194,6 +194,21 @@ TEST(KOReaderXPathResolver, SkipsWhitespaceOnlyTextWhenResolvingOffsets) {
   EXPECT_TRUE(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 34).empty());
 }
 
+TEST(KOReaderXPathResolver, ResolvesTextDirectlyInsideBody) {
+  const auto bare = epubWith("<html><body>Hello world</body></html>");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(bare, 0, 6), "/body/DocFragment[1]/body/text()[1].6");
+
+  // "\nHello" is one text run after the <p>, kept whole by crengine: text()[1] at offset 1.
+  const auto afterBlock = epubWith("<html><body><p>a</p>\nHello</body></html>");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(afterBlock, 0, 2),
+            "/body/DocFragment[1]/body/text()[1].1");
+}
+
+TEST(KOReaderXPathResolver, ProgressEndExcludesTrailingWhitespaceInsideRun) {
+  const auto epub = epubWith("<html><body><p>Text   </p></body></html>");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForProgress(epub, 0, 1.0f), "/body/DocFragment[1]/body/p[1]/text()[1].4");
+}
+
 TEST(KOReaderXPathResolver, MatchesCrengineTextNodeIndexingAroundWhitespace) {
   // crengine drops a whitespace-only text run when it is the first child of a block element,
   // so " rest" is text()[1] here, not text()[2].
