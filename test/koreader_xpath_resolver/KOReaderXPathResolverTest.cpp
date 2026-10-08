@@ -25,7 +25,9 @@ constexpr char kProcessingInstructionBoundaryFixture[] = R"(<html><body><p>befor
 constexpr char kCdataBoundaryFixture[] = R"(<html><body><p>before<![CDATA[middle]]>after</p></body></html>)";
 constexpr char kHiddenCdataFixture[] = R"(<html><body><p>before<rp><![CDATA[hidden]]></rp>after</p></body></html>)";
 
-// Kindle/MOBI-derived EPUBs (Calibre output) carry body text in <div>/<span>, not <p>.
+// Calibre output from Kindle/MOBI sources may carry body text in <div>/<span> with no <p>
+// beyond an empty filepos anchor, when the source MOBI was authored that way (it is not
+// universal: a Project Gutenberg MOBI converts back to <p> paragraphs).
 // Visible offsets below follow the layout parser: every body codepoint counts, including
 // formatting whitespace between blocks.
 //   0 "\n"   1 "\n"   2 "3"   3 " "   4 "\n"   5-13 "She drove"   14-26 " back to D.C."
