@@ -29,25 +29,6 @@ struct NameCounter {
   int count;
 };
 
-// Elements crengine lays out as blocks by default (its html5.css / fb2def.h). crengine drops a
-// whitespace-only text run that is the first child of such an element, so text()[N] indices
-// below must skip those runs to stay resolvable on the KOReader side.
-bool isBlockElement(const std::string& name) {
-  static const char* const kBlockTags[] = {
-      "html",       "body",   "address", "article",   "aside",  "blockquote", "caption", "center",  "col",
-      "colgroup",   "dd",     "details", "dialog",    "dir",    "div",        "dl",      "dt",      "fieldset",
-      "figcaption", "figure", "footer",  "form",      "h1",     "h2",         "h3",      "h4",      "h5",
-      "h6",         "header", "hgroup",  "hr",        "legend", "li",         "listing", "main",    "menu",
-      "nav",        "ol",     "p",       "plaintext", "pre",    "search",     "section", "summary", "table",
-      "tbody",      "td",     "tfoot",   "th",        "thead",  "tr",         "ul",      "xmp"};
-  for (const char* tag : kBlockTags) {
-    if (VisibleTextUtils::equalsTag(name, tag)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 // Mirrors crengine's IsEmptySpace(): only these four count as empty space.
 bool isWhitespaceOnly(const XML_Char* data, const int len) {
   for (int i = 0; i < len; i++) {
@@ -61,8 +42,6 @@ bool isWhitespaceOnly(const XML_Char* data, const int len) {
 
 struct ParentState {
   std::vector<NameCounter> children;
-  bool isBlock = false;
-  bool childSeen = false;  // an element or kept text node was already added (crengine getChildCount() > 0)
 
   int nextIndex(const std::string& name) {
     for (auto& child : children) {
@@ -481,19 +460,16 @@ class XPathProgressResolver final : public Print {
         insideBody = true;
         bodyDepth = depth;
         parentStates.emplace_back();
-        parentStates.back().isBlock = true;
         textNodeIndexStack.push_back(0);
       }
       depth++;
       return;
     }
 
-    endTextNode();
+    pendingTextNode = true;
     const int siblingIndex = parentStates.back().nextIndex(name);
-    parentStates.back().childSeen = true;
     path.push_back({name, siblingIndex});
     parentStates.emplace_back();
-    parentStates.back().isBlock = isBlockElement(name);
     textNodeIndexStack.push_back(0);
 
     if (nonVisibleDepth > 0 || VisibleTextUtils::isNonVisibleElement(name)) {
@@ -524,7 +500,7 @@ class XPathProgressResolver final : public Print {
       nonVisibleDepth--;
     }
 
-    endTextNode();
+    pendingTextNode = true;
     if (!textNodeIndexStack.empty()) {
       textNodeIndexStack.pop_back();
     }
@@ -551,21 +527,18 @@ class XPathProgressResolver final : public Print {
 
     const bool whitespaceOnly = isWhitespaceOnly(data, len);
 
-    // A text run starts on the first non-empty content after any structural boundary.
-    // Only counting non-empty runs matches KOReader's text()[N] indexing behavior, which
-    // skips empty text nodes created by bare <a id="anchor"/> anchors. A run that begins
-    // with whitespace as the first child of a block element stays provisional: crengine
-    // drops it unless the run goes on to contain non-whitespace text.
+    // Start a new text node on first non-empty content after any structural boundary.
+    // Only counting non-empty nodes matches KOReader's text()[N] indexing behavior,
+    // which skips empty text nodes created by bare <a id="anchor"/> anchors. crengine
+    // also drops a whitespace-only run that is the first child of a block element, but
+    // "block" there comes from the computed style (display, white-space), which this
+    // resolver does not see, so such a run is counted here like any other.
     if (pendingTextNode) {
+      if (!textNodeIndexStack.empty()) {
+        textNodeIndexStack.back()++;
+      }
       textNodeStartChars = visibleChars;
       pendingTextNode = false;
-      if (whitespaceOnly && parentStates.back().isBlock && !parentStates.back().childSeen) {
-        provisionalTextNode = true;
-      } else {
-        commitTextNode();
-      }
-    } else if (provisionalTextNode && !whitespaceOnly) {
-      commitTextNode();
     }
 
     // Whitespace-only runs are never used as anchors: a target that falls inside one is
@@ -591,23 +564,6 @@ class XPathProgressResolver final : public Print {
       return;
     }
 
-    endTextNode();
-  }
-
-  // The current text run becomes a real text node: it takes the next text()[N] index and
-  // counts as a child of its parent.
-  void commitTextNode() {
-    if (!textNodeIndexStack.empty()) {
-      textNodeIndexStack.back()++;
-    }
-    parentStates.back().childSeen = true;
-    provisionalTextNode = false;
-  }
-
-  // A structural boundary ends the current text run. A still-provisional run is dropped,
-  // exactly as crengine drops a whitespace-only first child of a block element.
-  void endTextNode() {
-    provisionalTextNode = false;
     pendingTextNode = true;
   }
 
@@ -618,7 +574,6 @@ class XPathProgressResolver final : public Print {
   bool insideBody = false;
   bool stopped = false;
   bool pendingTextNode = true;
-  bool provisionalTextNode = false;
   int depth = 0;
   int bodyDepth = -1;
   uint16_t nonVisibleDepth = 0;

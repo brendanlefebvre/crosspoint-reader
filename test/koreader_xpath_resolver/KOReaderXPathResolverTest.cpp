@@ -200,7 +200,7 @@ TEST(KOReaderXPathResolver, ResolvesTextDirectlyInsideBody) {
   const auto bare = epubWith("<html><body>Hello world</body></html>");
   EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(bare, 0, 6), "/body/DocFragment[1]/body/text()[1].6");
 
-  // "\nHello" is one text run after the <p>, kept whole by crengine: text()[1] at offset 1.
+  // "\nHello" is one text run after the <p>: text()[1] at offset 1.
   const auto afterBlock = epubWith("<html><body><p>a</p>\nHello</body></html>");
   EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(afterBlock, 0, 2),
             "/body/DocFragment[1]/body/text()[1].1");
@@ -209,27 +209,4 @@ TEST(KOReaderXPathResolver, ResolvesTextDirectlyInsideBody) {
 TEST(KOReaderXPathResolver, ProgressEndExcludesTrailingWhitespaceInsideRun) {
   const auto epub = epubWith("<html><body><p>Text   </p></body></html>");
   EXPECT_EQ(ChapterXPathResolver::findXPathForProgress(epub, 0, 1.0f), "/body/DocFragment[1]/body/p[1]/text()[1].4");
-}
-
-TEST(KOReaderXPathResolver, MatchesCrengineTextNodeIndexingAroundWhitespace) {
-  // crengine drops a whitespace-only text run when it is the first child of a block element,
-  // so " rest" is text()[1] here, not text()[2].
-  const auto blockLeading = epubWith("<html><body><div>\n<b>bold</b> rest</div></body></html>");
-  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(blockLeading, 0, 6),
-            "/body/DocFragment[1]/body/div[1]/text()[1].1");
-
-  // Inside an inline element the leading whitespace run is kept, so " rest" is text()[2].
-  const auto inlineLeading = epubWith("<html><body><p><span>\n<b>bold</b> rest</span></p></body></html>");
-  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(inlineLeading, 0, 6),
-            "/body/DocFragment[1]/body/p[1]/span[1]/text()[2].1");
-
-  // Whitespace that is not the first child of a block is kept and counted.
-  const auto blockInterior = epubWith("<html><body><div><b>bold</b>\n<i>x</i> rest</div></body></html>");
-  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(blockInterior, 0, 7),
-            "/body/DocFragment[1]/body/div[1]/text()[2].1");
-
-  // A run that starts with whitespace but continues with text is one kept node.
-  const auto mixedRun = epubWith("<html><body><div>\n  Text</div></body></html>");
-  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(mixedRun, 0, 3),
-            "/body/DocFragment[1]/body/div[1]/text()[1].3");
 }
