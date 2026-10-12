@@ -531,13 +531,15 @@ class XPathProgressResolver final : public Print {
     }
 
     const size_t nextVisibleChars = visibleChars + codepointCount;
-    const bool targetInCurrentChunk = boundaryMode == BoundaryMode::Inclusive ? targetVisibleChar <= nextVisibleChars
-                                                                              : targetVisibleChar < nextVisibleChars;
-    // Whitespace-only runs are never anchors; a target in one carries forward
-    // to the next text run, which then resolves at its offset 0.
+    // Whitespace is never an anchor: a target in a whitespace-only run, or in
+    // a run's trailing whitespace, carries forward to the next text run, which
+    // then resolves at its offset 0.
     const int trailing = trailingWhitespaceCount(data, len);
     const bool eligiblePath = path.size() >= minimumPathDepth && trailing >= 0;
-    if (eligiblePath) lastEligibleEnd = nextVisibleChars - static_cast<size_t>(trailing);
+    const size_t textEnd = eligiblePath ? nextVisibleChars - static_cast<size_t>(trailing) : nextVisibleChars;
+    const bool targetInCurrentChunk =
+        boundaryMode == BoundaryMode::Inclusive ? targetVisibleChar <= textEnd : targetVisibleChar < textEnd;
+    if (eligiblePath) lastEligibleEnd = textEnd;
     if (targetInCurrentChunk && eligiblePath) {
       // A target in a split container's whitespace advances to its next child.
       const size_t delta = targetVisibleChar > visibleChars ? targetVisibleChar - visibleChars : 0;

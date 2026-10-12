@@ -221,6 +221,22 @@ TEST(KOReaderXPathResolver, ProgressEndExcludesTrailingWhitespaceInsideRun) {
   EXPECT_EQ(ChapterXPathResolver::findXPathForProgress(epub, 0, 1.0f), "/body/DocFragment[1]/body/p[1]/text()[1].4");
 }
 
+TEST(KOReaderXPathResolver, CarriesTrailingWhitespaceOffsetsToNextText) {
+  // "word" is 0-3 and its trailing spaces 4-5; a page cannot start in them, so they
+
+  // resolve to the next text run like a whitespace-only run would.
+
+  const auto epub = epubWith("<html><body><div>word  </div><div>next</div></body></html>");
+
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 3),
+
+            "/body/DocFragment[1]/body/div[1]/text()[1].3");
+
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 5),
+
+            "/body/DocFragment[1]/body/div[2]/text()[1].0");
+}
+
 TEST(KOReaderXPathResolver, NumbersTextNodesAfterInlineElementsOutsideParagraphs) {
   // crengine numbers each text child of the <div>: "one " is text()[1], " three" is text()[2].
   //   0-3 "one "   4-6 "two"   7-12 " three"
