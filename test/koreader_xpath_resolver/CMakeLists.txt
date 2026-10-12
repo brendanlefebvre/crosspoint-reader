@@ -17,6 +17,7 @@ target_include_directories(KOReaderXPathResolverTest PRIVATE
 )
 
 target_compile_definitions(KOReaderXPathResolverTest PRIVATE
+  KOSYNC_FIXTURE_DIR="${REPO_ROOT}/test/epubs-src/test_kosync_div_span/OEBPS"
   XML_CONTEXT_BYTES=1024
   XML_GE=0
 )

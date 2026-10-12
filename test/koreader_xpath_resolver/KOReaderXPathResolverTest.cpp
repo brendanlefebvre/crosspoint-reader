@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <utility>
@@ -227,4 +229,21 @@ TEST(KOReaderXPathResolver, NumbersTextNodesAfterInlineElementsOutsideParagraphs
             "/body/DocFragment[1]/body/div[1]/text()[2].2");
   EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 5),
             "/body/DocFragment[1]/body/div[1]/i[1]/text()[1].1");
+}
+
+TEST(KOReaderXPathResolver, ResolvesFixtureTextAfterItalics) {
+  // test/epubs-src/test_kosync_div_span: Alice chapters recoded in the Calibre-from-MOBI
+  // shape, with every paragraph in <div><span> and italics as <span class="italic">.
+  std::ifstream file(KOSYNC_FIXTURE_DIR "/chapter01.xhtml", std::ios::binary);
+  ASSERT_TRUE(file.is_open());
+  const auto epub = epubWith(std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()));
+
+  // div[6]: "There was nothing so <i>very</i> remarkable in that; nor did Alice think it
+  // so <i>very</i> much out of the way ..." has text runs before, between, and after.
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 649),
+            "/body/DocFragment[1]/body/div[6]/span[1]/span[1]/text()[1].0");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 654),
+            "/body/DocFragment[1]/body/div[6]/span[1]/text()[2].1");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForVisibleTextOffset(epub, 0, 705),
+            "/body/DocFragment[1]/body/div[6]/span[1]/text()[3].1");
 }
