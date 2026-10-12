@@ -55,6 +55,7 @@
 - Give the reader spacing and screen-margin sliders more breathing room above the button hints.
 - Measure the top margin in global screen-margin previews from the bottom of the header bar, removing the extra gap.
 - Display the "Sleeping..." toast on sleep.
+- KOReader Sync sends the exact position in Kindle-derived EPUBs whose paragraphs aren't marked as paragraphs, including text after italics or links, positions that fall in the blank space between paragraphs, and the very end of a chapter (adapted from CrossPoint #3923).
 
 ### Changed
 

@@ -62,6 +62,16 @@ std::string buildParagraphXPath(const int spineIndex, const std::vector<PathSegm
   return xpath;
 }
 
+// Same set crengine treats as empty space; NBSP is visible text.
+bool isWhitespaceByte(const char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t'; }
+
+// Codepoints of trailing whitespace in a run, or -1 when the run is whitespace only.
+int trailingWhitespaceCount(const XML_Char* data, const int len) {
+  int trailing = 0;
+  while (trailing < len && isWhitespaceByte(data[len - 1 - trailing])) trailing++;
+  return trailing == len ? -1 : trailing;
+}
+
 size_t countUtf8Codepoints(const XML_Char* data, const int len) {
   if (!data || len <= 0) {
     return 0;
@@ -141,6 +151,8 @@ class ParagraphTextCounter final : public Print {
   }
 
   size_t totalVisibleChars() const { return visibleChars; }
+  // Ends at the last non-whitespace codepoint so 100% resolves inside real text.
+  size_t textEndChars() const { return lastTextEndChars; }
 
  private:
   static void XMLCALL startElement(void* userData, const XML_Char* name, const XML_Char**) {
@@ -197,6 +209,8 @@ class ParagraphTextCounter final : public Print {
     }
 
     visibleChars += countUtf8Codepoints(data, len);
+    const int trailing = trailingWhitespaceCount(data, len);
+    if (trailing >= 0) lastTextEndChars = visibleChars - static_cast<size_t>(trailing);
   }
 
  private:
@@ -208,6 +222,7 @@ class ParagraphTextCounter final : public Print {
   int bodyDepth = -1;
   int nonVisibleDepth = 0;
   size_t visibleChars = 0;
+  size_t lastTextEndChars = 0;
 };
 
 class XPathElementResolver final : public Print {
@@ -456,12 +471,6 @@ class XPathProgressResolver final : public Print {
     textNodeIndexStack.push_back(0);
     pendingTextNode = true;
 
-    if (name == "p") {
-      paragraphDepth++;
-    }
-    if (name == "li") {
-      liDepth++;
-    }
     if (nonVisibleDepth > 0 || isNonVisibleTextTag(name)) nonVisibleDepth++;
 
     depth++;
@@ -484,20 +493,14 @@ class XPathProgressResolver final : public Print {
       return;
     }
 
-    if (name == "p" && paragraphDepth > 0) {
-      paragraphDepth--;
-    }
-    if (name == "li" && liDepth > 0) {
-      liDepth--;
-    }
     if (nonVisibleDepth > 0) nonVisibleDepth--;
 
     if (!textNodeIndexStack.empty()) {
       textNodeIndexStack.pop_back();
     }
-    if (paragraphDepth > 0 || liDepth > 0) {
-      pendingTextNode = true;
-    }
+    // Text after a closed child is a new crengine text node in any parent,
+    // e.g. " three" in <div>one <i>two</i> three</div> is text()[2].
+    pendingTextNode = true;
     if (!path.empty()) {
       path.pop_back();
     }
@@ -530,8 +533,11 @@ class XPathProgressResolver final : public Print {
     const size_t nextVisibleChars = visibleChars + codepointCount;
     const bool targetInCurrentChunk = boundaryMode == BoundaryMode::Inclusive ? targetVisibleChar <= nextVisibleChars
                                                                               : targetVisibleChar < nextVisibleChars;
-    const bool eligiblePath = path.size() >= minimumPathDepth;
-    if (eligiblePath) lastEligibleEnd = nextVisibleChars;
+    // Whitespace-only runs are never anchors; a target in one carries forward
+    // to the next text run, which then resolves at its offset 0.
+    const int trailing = trailingWhitespaceCount(data, len);
+    const bool eligiblePath = path.size() >= minimumPathDepth && trailing >= 0;
+    if (eligiblePath) lastEligibleEnd = nextVisibleChars - static_cast<size_t>(trailing);
     if (targetInCurrentChunk && eligiblePath) {
       // A target in a split container's whitespace advances to its next child.
       const size_t delta = targetVisibleChar > visibleChars ? targetVisibleChar - visibleChars : 0;
@@ -562,8 +568,6 @@ class XPathProgressResolver final : public Print {
   bool pendingTextNode = true;
   int depth = 0;
   int bodyDepth = -1;
-  int paragraphDepth = 0;
-  int liDepth = 0;
   int nonVisibleDepth = 0;
   size_t visibleChars = 0;
   size_t textNodeStartChars = 0;
@@ -653,7 +657,9 @@ std::string ChapterXPathResolver::findXPathForProgress(const std::shared_ptr<Epu
     return "";
   }
 
-  const size_t totalVisibleChars = counter.totalVisibleChars();
+  // Split books keep the whole count: their trailing container whitespace
+  // re-reads at the last content character in resolveVisibleOffset.
+  const size_t totalVisibleChars = minimumPathDepth > 0 ? counter.totalVisibleChars() : counter.textEndChars();
   if (totalVisibleChars == 0) {
     return "";
   }
